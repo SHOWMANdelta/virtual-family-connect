@@ -54,6 +54,15 @@ export default function VideoRoom() {
   const iceGatheringTimersRef = useRef<Map<string, number>>(new Map());
   const mediaWatchdogRef = useRef<Map<string, number>>(new Map());
 
+  // Helper: detect if we already have live local media (works across browsers)
+  const hasActiveLocalMedia = () => {
+    const s = localStreamRef.current;
+    if (s && s.getTracks().some((t) => t.readyState === "live")) return true;
+    const el = videoRef.current as HTMLVideoElement | null;
+    const so = (el?.srcObject as MediaStream | null) || null;
+    return !!(so && so.getTracks().some((t) => t.readyState === "live"));
+  };
+
   const room = useQuery(api.rooms.getRoom, roomId ? { roomId: roomId as any } : "skip");
   const participants = useQuery(api.rooms.getRoomParticipants, roomId ? { roomId: roomId as any } : "skip");
   const messages = useQuery(api.messages.getRoomMessages, roomId ? { roomId: roomId as any } : "skip");
@@ -350,9 +359,37 @@ export default function VideoRoom() {
     let cleanupFns: Array<() => void> = [];
     const check = async () => {
       try {
-        // Some browsers support these permission names
-        const perms = navigator.permissions as any;
-        if (!perms?.query) return;
+        const hasMedia = hasActiveLocalMedia();
+
+        // Fallback path for Safari/older browsers: infer permission via device labels
+        let devices: MediaDeviceInfo[] = [];
+        try {
+          devices = await navigator.mediaDevices.enumerateDevices();
+        } catch {
+          // ignore
+        }
+        const hasInputs =
+          devices.some((d) => d.kind === "videoinput") &&
+          devices.some((d) => d.kind === "audioinput");
+        const labelsVisible = devices.some((d) => (d.label || "").length > 0);
+
+        // If we already have live media or labels are visible, do not prompt
+        if (hasMedia || labelsVisible) {
+          setNeedsPermissionPrompt(false);
+          setPermissionDetail("");
+        }
+
+        const perms = (navigator as any).permissions;
+        if (!perms?.query) {
+          // No Permissions API: decide based on devices and media presence
+          if (!hasMedia && !labelsVisible) {
+            setNeedsPermissionPrompt(true);
+            setPermissionDetail(
+              "We couldn't confirm access. Click below to grant camera and microphone."
+            );
+          }
+          return;
+        }
 
         const queries = [
           perms.query({ name: "camera" as PermissionName }).catch(() => null),
@@ -362,21 +399,25 @@ export default function VideoRoom() {
 
         const states = [cam?.state, mic?.state].filter(Boolean) as Array<PermissionState>;
         if (states.length) {
-          const showPrompt = states.some((s) => s === "denied" || s === "prompt");
-          setNeedsPermissionPrompt(showPrompt);
-          setPermissionDetail(
-            showPrompt
-              ? "Camera and microphone access is required. Click below to enable. If already granted, use the browser's address bar lock icon to allow."
-              : ""
-          );
+          const wantsPrompt = states.some((s) => s === "denied" || s === "prompt");
+          // Only show prompt if we truly don't have access nor confirmed labels
+          if (wantsPrompt && !hasMedia && !labelsVisible) {
+            setNeedsPermissionPrompt(true);
+            setPermissionDetail(
+              "Camera and microphone access is required. Click below to enable. If already granted, use the lock icon in the address bar to allow."
+            );
+          } else {
+            setNeedsPermissionPrompt(false);
+            setPermissionDetail("");
+          }
 
-          // Track changes
+          // Track permission changes
           [cam, mic].forEach((status) => {
             if (status) {
               const handler = () => {
                 const s = status.state;
-                const show = s === "denied" || s === "prompt";
-                setNeedsPermissionPrompt(show);
+                const show = (s === "denied" || s === "prompt") && !hasActiveLocalMedia();
+                setNeedsPermissionPrompt(show && !labelsVisible);
               };
               status.addEventListener("change", handler);
               cleanupFns.push(() => status.removeEventListener("change", handler));
@@ -390,10 +431,16 @@ export default function VideoRoom() {
 
     check();
 
-    // Also re-check when tab becomes visible (user may change permissions)
+    // Also re-check and re-request when tab becomes visible (user may change permissions)
     const visHandler = () => {
       if (document.visibilityState === "visible") {
         check();
+        if (!hasActiveLocalMedia()) {
+          // Proactively try to acquire media again under user-visible state
+          initializeMedia().catch(() => {
+            // initializeMedia already handles toasts and state
+          });
+        }
       }
     };
     document.addEventListener("visibilitychange", visHandler);
