@@ -42,6 +42,9 @@ export default function VideoRoom() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
 
+  // Track which peers we've already alerted for connection issues
+  const connectionAlertsRef = useRef<Set<string>>(new Set());
+
   const room = useQuery(api.rooms.getRoom, roomId ? { roomId: roomId as any } : "skip");
   const participants = useQuery(api.rooms.getRoomParticipants, roomId ? { roomId: roomId as any } : "skip");
   const messages = useQuery(api.messages.getRoomMessages, roomId ? { roomId: roomId as any } : "skip");
@@ -164,13 +167,36 @@ export default function VideoRoom() {
 
     pc.onconnectionstatechange = () => {
       if (pc && (pc.connectionState === "disconnected" || pc.connectionState === "failed")) {
-        // Cleanup on disconnect
+        const key = `${peerUserId}:${pc.connectionState}`;
+        if (!connectionAlertsRef.current.has(key)) {
+          connectionAlertsRef.current.add(key);
+          toast.error(
+            pc.connectionState === "failed"
+              ? `Connection failed with ${getDisplayName(peerUserId)}`
+              : `Disconnected from ${getDisplayName(peerUserId)}`
+          );
+        }
         pc.close();
         peerConnectionsRef.current.delete(peerUserId);
         remoteStreamsRef.current.delete(peerUserId);
         makingOfferRef.current.delete(peerUserId);
         pendingCandidatesRef.current.delete(peerUserId);
         forceRender((n) => n + 1);
+      }
+    };
+
+    // Also surface ICE layer issues
+    pc.oniceconnectionstatechange = () => {
+      if (pc.iceConnectionState === "failed" || pc.iceConnectionState === "disconnected") {
+        const key = `${peerUserId}:ice:${pc.iceConnectionState}`;
+        if (!connectionAlertsRef.current.has(key)) {
+          connectionAlertsRef.current.add(key);
+          toast.warning(
+            pc.iceConnectionState === "failed"
+              ? `Network issue: ICE failed with ${getDisplayName(peerUserId)}`
+              : `Network unstable: ICE disconnected from ${getDisplayName(peerUserId)}`
+          );
+        }
       }
     };
 
@@ -278,25 +304,98 @@ export default function VideoRoom() {
 
   // Update initializeMedia to also attach tracks to existing PCs
   const initializeMedia = async () => {
+    const tryGet = async (constraints: MediaStreamConstraints) => {
+      try {
+        return await navigator.mediaDevices.getUserMedia(constraints);
+      } catch (err: any) {
+        throw err;
+      }
+    };
+
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: true,
-        audio: true
+      // Primary constraints
+      let stream = await tryGet({
+        video: { facingMode: "user" },
+        audio: { echoCancellation: true, noiseSuppression: true },
       });
-      
+
       localStreamRef.current = stream;
-      
+
+      // Notify if tracks end (e.g., device unplugged, permission revoked)
+      stream.getTracks().forEach((t) => {
+        t.onended = () => {
+          toast.warning(`${t.kind === "video" ? "Camera" : "Microphone"} stopped`);
+        };
+        t.onmute = () => {
+          // Avoid noisy toasts; log instead
+          console.debug(`${t.kind} track muted`);
+        };
+        t.onunmute = () => {
+          console.debug(`${t.kind} track unmuted`);
+        };
+      });
+
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
+        const p = (videoRef.current as HTMLVideoElement).play();
+        if (p && typeof p.then === "function") {
+          p.catch(() => {
+            // Some browsers block autoplay until user gesture
+            toast.info("Tap to start local video playback");
+          });
+        }
       }
 
-      // Attach tracks to any existing peer connections
+      // Attach to existing PCs
       for (const pc of peerConnectionsRef.current.values()) {
         attachLocalTracksToPc(pc);
       }
-    } catch (error) {
-      console.error("Error accessing media devices:", error);
-      toast.error("Could not access camera or microphone");
+    } catch (error: any) {
+      // Try fallbacks: video-only, then audio-only
+      console.warn("Primary getUserMedia failed, trying fallbacks", error);
+      try {
+        const videoOnly = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        localStreamRef.current = videoOnly;
+        if (videoRef.current) {
+          videoRef.current.srcObject = videoOnly;
+          videoRef.current.play().catch(() => toast.info("Tap to start local video playback"));
+        }
+        for (const pc of peerConnectionsRef.current.values()) attachLocalTracksToPc(pc);
+        toast.warning("Microphone unavailable. Using camera only.");
+      } catch (e1: any) {
+        try {
+          const audioOnly = await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
+          localStreamRef.current = audioOnly;
+          if (videoRef.current) {
+            videoRef.current.srcObject = audioOnly;
+          }
+          for (const pc of peerConnectionsRef.current.values()) attachLocalTracksToPc(pc);
+          toast.warning("Camera unavailable. Using microphone only.");
+        } catch (e2: any) {
+          let msg = "Could not access camera or microphone";
+          if (error && typeof error.name === "string") {
+            switch (error.name) {
+              case "NotAllowedError":
+                msg = "Permission denied for camera/microphone. Please allow access.";
+                break;
+              case "NotFoundError":
+              case "DevicesNotFoundError":
+                msg = "No camera or microphone found.";
+                break;
+              case "NotReadableError":
+                msg = "Your camera/microphone is already in use by another app.";
+                break;
+              case "OverconstrainedError":
+                msg = "Device cannot satisfy requested media constraints.";
+                break;
+              default:
+                msg = `Media error: ${error.name}`;
+            }
+          }
+          console.error("Error accessing media devices:", error, e1, e2);
+          toast.error(msg);
+        }
+      }
     }
   };
 
@@ -628,9 +727,11 @@ export default function VideoRoom() {
                   el.srcObject = stream;
                   el.play().catch((err) => {
                     console.warn("Auto-play failed for remote video; will rely on user gesture", err);
+                    toast.info(`Tap to play video for ${getDisplayName(uid)}`);
                   });
                 }
               }}
+              onError={() => toast.error(`Remote video failed to render for ${getDisplayName(uid)}`)}
               muted={false}
             />
             <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-black/10" />
@@ -735,6 +836,7 @@ export default function VideoRoom() {
               autoPlay
               muted
               playsInline
+              onError={() => toast.error("Local video failed to render")}
               className="w-full h-full object-cover"
             />
             
