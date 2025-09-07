@@ -15,11 +15,32 @@ export const createAppointment = mutation({
   handler: async (ctx, args) => {
     const user = await getCurrentUser(ctx);
     if (!user) {
-      throw new Error("Must be authenticated");
+      throw new Error("AUTH_REQUIRED: Must be authenticated");
+    }
+
+    // Validate times
+    if (args.duration <= 0 || args.duration > 24 * 60) {
+      throw new Error("INVALID_DURATION: Duration must be between 1 and 1440 minutes");
+    }
+    if (args.scheduledTime <= 0) {
+      throw new Error("INVALID_SCHEDULE: scheduledTime must be a valid timestamp");
+    }
+
+    // Validate relatives exist
+    const relDocs = await Promise.all(args.relativeIds.map((id) => ctx.db.get(id)));
+    if (relDocs.some((r) => r === null)) {
+      throw new Error("INVALID_RELATIVES: One or more relatives do not exist");
+    }
+
+    // Validate patient (if provided)
+    const patientId = args.patientId || user._id;
+    const patientDoc = await ctx.db.get(patientId);
+    if (!patientDoc) {
+      throw new Error("PATIENT_NOT_FOUND: Patient user does not exist");
     }
 
     const appointmentId = await ctx.db.insert("appointments", {
-      patientId: args.patientId || user._id,
+      patientId,
       providerId: user.role === "healthcare_provider" ? user._id : undefined,
       relativeIds: args.relativeIds,
       title: args.title,
@@ -97,15 +118,27 @@ export const startAppointment = mutation({
   handler: async (ctx, args) => {
     const user = await getCurrentUser(ctx);
     if (!user) {
-      throw new Error("Must be authenticated");
+      throw new Error("AUTH_REQUIRED: Must be authenticated");
     }
 
     const appointment = await ctx.db.get(args.appointmentId);
     if (!appointment) {
-      throw new Error("Appointment not found");
+      throw new Error("APPOINTMENT_NOT_FOUND: Appointment does not exist");
     }
 
-    // Create room for the appointment
+    // Authorization: must be the patient, provider, or a listed relative
+    const isPatient = appointment.patientId === user._id;
+    const isProvider = appointment.providerId === user._id;
+    const isRelative = appointment.relativeIds.some((id) => id === user._id);
+    if (!isPatient && !isProvider && !isRelative) {
+      throw new Error("NOT_AUTHORIZED: You are not a participant in this appointment");
+    }
+
+    // Prevent duplicate room creation
+    if (appointment.roomId) {
+      return appointment.roomId;
+    }
+
     const roomId = await ctx.db.insert("rooms", {
       name: `${appointment.title} - ${new Date(appointment.scheduledTime).toLocaleString()}`,
       description: appointment.description,

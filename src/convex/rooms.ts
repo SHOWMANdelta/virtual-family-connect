@@ -14,20 +14,32 @@ export const createRoom = mutation({
   handler: async (ctx, args) => {
     const user = await getCurrentUser(ctx);
     if (!user) {
-      throw new Error("Must be authenticated to create a room");
+      throw new Error("AUTH_REQUIRED: Must be authenticated to create a room");
+    }
+
+    // Basic validation
+    const name = args.name.trim();
+    if (name.length < 2) {
+      throw new Error("INVALID_ROOM_NAME: Room name must be at least 2 characters");
+    }
+    const maxParticipants = args.maxParticipants ?? 10;
+    if (maxParticipants < 2 || maxParticipants > 50) {
+      throw new Error("INVALID_CAPACITY: maxParticipants must be between 2 and 50");
+    }
+    if (args.scheduledTime && args.scheduledTime < 0) {
+      throw new Error("INVALID_SCHEDULE: scheduledTime must be a valid timestamp");
     }
 
     const roomId = await ctx.db.insert("rooms", {
-      name: args.name,
+      name,
       description: args.description,
       createdBy: user._id,
       isActive: true,
-      maxParticipants: args.maxParticipants || 10,
+      maxParticipants,
       roomType: args.roomType,
       scheduledTime: args.scheduledTime,
     });
 
-    // Add creator as host participant
     await ctx.db.insert("roomParticipants", {
       roomId,
       userId: user._id,
@@ -51,18 +63,20 @@ export const joinRoom = mutation({
   handler: async (ctx, args) => {
     const user = await getCurrentUser(ctx);
     if (!user) {
-      throw new Error("Must be authenticated to join a room");
+      throw new Error("AUTH_REQUIRED: Must be authenticated to join a room");
     }
 
     const room = await ctx.db.get(args.roomId);
-    if (!room || !room.isActive) {
-      throw new Error("Room not found or inactive");
+    if (!room) {
+      throw new Error("ROOM_NOT_FOUND: Room does not exist");
+    }
+    if (!room.isActive) {
+      throw new Error("ROOM_INACTIVE: Cannot join an inactive room");
     }
 
-    // Check if already in room
     const existing = await ctx.db
       .query("roomParticipants")
-      .withIndex("by_room_and_user", (q) => 
+      .withIndex("by_room_and_user", (q) =>
         q.eq("roomId", args.roomId).eq("userId", user._id)
       )
       .filter((q) => q.eq(q.field("leftAt"), undefined))
@@ -72,7 +86,6 @@ export const joinRoom = mutation({
       return existing._id;
     }
 
-    // Check room capacity
     const currentParticipants = await ctx.db
       .query("roomParticipants")
       .withIndex("by_room", (q) => q.eq("roomId", args.roomId))
@@ -80,7 +93,7 @@ export const joinRoom = mutation({
       .collect();
 
     if (currentParticipants.length >= room.maxParticipants) {
-      throw new Error("Room is at capacity");
+      throw new Error("ROOM_AT_CAPACITY: Room is at capacity");
     }
 
     const participantId = await ctx.db.insert("roomParticipants", {
@@ -106,22 +119,25 @@ export const leaveRoom = mutation({
   handler: async (ctx, args) => {
     const user = await getCurrentUser(ctx);
     if (!user) {
-      throw new Error("Must be authenticated");
+      throw new Error("AUTH_REQUIRED: Must be authenticated");
     }
 
     const participant = await ctx.db
       .query("roomParticipants")
-      .withIndex("by_room_and_user", (q) => 
+      .withIndex("by_room_and_user", (q) =>
         q.eq("roomId", args.roomId).eq("userId", user._id)
       )
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
 
-    if (participant) {
-      await ctx.db.patch(participant._id, {
-        leftAt: Date.now(),
-      });
+    if (!participant) {
+      // Not an error — idempotent leave
+      return;
     }
+
+    await ctx.db.patch(participant._id, {
+      leftAt: Date.now(),
+    });
   },
 });
 
