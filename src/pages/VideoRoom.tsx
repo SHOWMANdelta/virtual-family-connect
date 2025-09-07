@@ -1107,121 +1107,135 @@ export default function VideoRoom() {
           rounded-2xl bg-black/30 backdrop-blur-xl border border-white/10 shadow-2xl
         "
       >
-        {entries.map(([uid, stream]) => (
-          <motion.div
-            key={uid}
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="
-              group relative
-              flex-none
-              w-44 h-28 xs:w-52 xs:h-32 sm:w-60 sm:h-36 md:w-48 md:h-32 lg:w-56 lg:h-36
-              rounded-xl overflow-hidden
-              ring-2 ring-white/10 hover:ring-white/25 transition-all duration-200
-              shadow-[0_10px_30px_rgba(0,0,0,0.45)] bg-gray-850
-            "
-          >
-            <video
-              autoPlay
-              playsInline
-              className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
-              ref={(el) => {
-                if (el && el.srcObject !== stream) {
-                  el.srcObject = stream;
-                  el.muted = true; // Start muted to satisfy autoplay policies
-                  // Attach track-level diagnostics
-                  stream.getTracks().forEach((t) => {
-                    t.onended = () => {
-                      toastOnce(`remote:${uid}:trackended:${t.kind}`, () =>
-                        toast.warning(`${getDisplayName(uid)}'s ${t.kind} stopped`)
+        {entries.flatMap(([uid, stream]) => {
+          const videoTracks = stream.getVideoTracks();
+          const toRender = videoTracks.length ? videoTracks : [null as unknown as MediaStreamTrack];
+          return toRender.map((track, idx) => (
+            <motion.div
+              key={`${uid}:${track ? track.id : "no-video"}:${idx}`}
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="
+                group relative
+                flex-none
+                w-44 h-28 xs:w-52 xs:h-32 sm:w-60 sm:h-36 md:w-48 md:h-32 lg:w-56 lg:h-36
+                rounded-xl overflow-hidden
+                ring-2 ring-white/10 hover:ring-white/25 transition-all duration-200
+                shadow-[0_10px_30px_rgba(0,0,0,0.45)] bg-gray-850
+              "
+            >
+              <video
+                autoPlay
+                playsInline
+                className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
+                ref={(el) => {
+                  if (!el) return;
+                  if (track) {
+                    // Attach single video track to its own MediaStream only if different
+                    const current = (el.srcObject as MediaStream | null) || null;
+                    const currentTrackId = current?.getVideoTracks?.()[0]?.id;
+                    if (currentTrackId !== track.id) {
+                      const ms = new MediaStream();
+                      try {
+                        ms.addTrack(track);
+                      } catch {}
+                      el.srcObject = ms;
+                      el.muted = true; // Start muted to satisfy autoplay policies
+                      // Attach track-level diagnostics
+                      track.onended = () => {
+                        toastOnce(`remote:${uid}:trackended:${track.id}`, () =>
+                          toast.warning(`${getDisplayName(uid)}'s video stopped`)
+                        );
+                      };
+                      track.onmute = () => {
+                        // Avoid toast spam; log instead
+                        console.debug(`Remote video track muted for ${getDisplayName(uid)}`);
+                      };
+                      track.onunmute = () => {
+                        console.debug(`Remote video track unmuted for ${getDisplayName(uid)}`);
+                      };
+                      el.play().catch((err) => {
+                        console.warn("Auto-play failed for remote video track", err);
+                        toastOnce(`remote:${uid}:tap-to-play:${track.id}`, () =>
+                          toast.info(`Tap to play ${getDisplayName(uid)}'s video`)
+                        );
+                      });
+                    }
+                  } else {
+                    // No video track: clear srcObject to avoid stale feed
+                    if (el.srcObject) el.srcObject = null;
+                  }
+                }}
+                onClick={(e) => {
+                  const el = e.currentTarget;
+                  if (el.muted) {
+                    el.muted = false;
+                    el.play().catch((err) => {
+                      console.warn("Play after unmute failed", err);
+                      toastOnce(`remote:${uid}:tap-again`, () =>
+                        toast.info(`Tap again to play ${getDisplayName(uid)}`)
                       );
-                    };
-                    t.onmute = () => {
-                      // Avoid toast spam; log instead
-                      console.debug(`Remote ${t.kind} track muted for ${getDisplayName(uid)}`);
-                    };
-                    t.onunmute = () => {
-                      console.debug(`Remote ${t.kind} track unmuted for ${getDisplayName(uid)}`);
-                    };
-                  });
-                  // Try to start playback
-                  el.play().catch((err) => {
-                    console.warn("Auto-play failed for remote video; will rely on user gesture", err);
-                    toastOnce(`remote:${uid}:tap-to-play`, () =>
-                      toast.info(`Tap video to play for ${getDisplayName(uid)}`)
-                    );
-                  });
+                    });
+                  }
+                }}
+                onLoadedMetadata={(e) => {
+                  const el = e.currentTarget;
+                  if (el.paused) {
+                    el.play().catch(() => {
+                      toastOnce(`remote:${uid}:loadedmetadata-play`, () =>
+                        toast.info(`Tap video to play for ${getDisplayName(uid)}`)
+                      );
+                    });
+                  }
+                }}
+                onStalled={() =>
+                  toastOnce(`remote:${uid}:stalled`, () =>
+                    toast.warning(`Video from ${getDisplayName(uid)} stalled. Reconnecting...`)
+                  )
                 }
-              }}
-              onClick={(e) => {
-                const el = e.currentTarget;
-                if (el.muted) {
-                  el.muted = false;
-                  el.play().catch((err) => {
-                    console.warn("Play after unmute failed", err);
-                    toastOnce(`remote:${uid}:tap-again`, () =>
-                      toast.info(`Tap again to play ${getDisplayName(uid)}`)
-                    );
-                  });
+                onWaiting={() =>
+                  toastOnce(`remote:${uid}:waiting`, () =>
+                    toast.info(`Waiting for ${getDisplayName(uid)}'s video...`)
+                  )
                 }
-              }}
-              onLoadedMetadata={(e) => {
-                const el = e.currentTarget;
-                if (el.paused) {
-                  el.play().catch(() => {
-                    toastOnce(`remote:${uid}:loadedmetadata-play`, () =>
-                      toast.info(`Tap video to play for ${getDisplayName(uid)}`)
-                    );
-                  });
+                onEmptied={() =>
+                  toastOnce(`remote:${uid}:emptied`, () =>
+                    toast.warning(`Video stream from ${getDisplayName(uid)} was interrupted`)
+                  )
                 }
-              }}
-              onStalled={() =>
-                toastOnce(`remote:${uid}:stalled`, () =>
-                  toast.warning(`Video from ${getDisplayName(uid)} stalled. Reconnecting...`)
-                )
-              }
-              onWaiting={() =>
-                toastOnce(`remote:${uid}:waiting`, () =>
-                  toast.info(`Waiting for ${getDisplayName(uid)}'s video...`)
-                )
-              }
-              onEmptied={() =>
-                toastOnce(`remote:${uid}:emptied`, () =>
-                  toast.warning(`Video stream from ${getDisplayName(uid)} was interrupted`)
-                )
-              }
-              onSuspend={() =>
-                toastOnce(`remote:${uid}:suspend`, () =>
-                  toast.info(`Video from ${getDisplayName(uid)} is temporarily suspended`)
-                )
-              }
-              onError={() =>
-                toastOnce(`remote:${uid}:error`, () =>
-                  toast.error(`Remote video failed to render for ${getDisplayName(uid)}`)
-                )
-              }
-              muted
-              aria-label={`Remote video from ${getDisplayName(uid)}. Tap to toggle audio.`}
-            />
-            {/* top gradient and live badge */}
-            <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/45 via-transparent to-black/20" />
-            <span className="pointer-events-none absolute top-2 left-2 text-[10px] font-semibold tracking-wide px-2 py-0.5 rounded-full bg-red-500/90 text-white shadow">
-              Live
-            </span>
-            {/* name bar */}
-            <div className="absolute bottom-1 left-1 right-1 flex items-center gap-2 rounded-md px-2 py-1.5 bg-black/45 backdrop-blur-sm">
-              <Avatar className="w-6 h-6 shrink-0 ring-1 ring-white/25">
-                <AvatarImage src={getAvatarImage(uid)} />
-                <AvatarFallback className="text-[10px]">
-                  {getInitials(getDisplayName(uid), undefined)}
-                </AvatarFallback>
-              </Avatar>
-              <p className="text-[11px] leading-tight text-white/95 truncate">
-                {getDisplayName(uid)}
-              </p>
-            </div>
-          </motion.div>
-        ))}
+                onSuspend={() =>
+                  toastOnce(`remote:${uid}:suspend`, () =>
+                    toast.info(`Video from ${getDisplayName(uid)} is temporarily suspended`)
+                  )
+                }
+                onError={() =>
+                  toastOnce(`remote:${uid}:error`, () =>
+                    toast.error(`Remote video failed to render for ${getDisplayName(uid)}`)
+                  )
+                }
+                muted
+                aria-label={`Remote video from ${getDisplayName(uid)}. Tap to toggle audio.`}
+              />
+              {/* top gradient and live badge */}
+              <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/45 via-transparent to-black/20" />
+              <span className="pointer-events-none absolute top-2 left-2 text-[10px] font-semibold tracking-wide px-2 py-0.5 rounded-full bg-red-500/90 text-white shadow">
+                Live
+              </span>
+              {/* name bar */}
+              <div className="absolute bottom-1 left-1 right-1 flex items-center gap-2 rounded-md px-2 py-1.5 bg-black/45 backdrop-blur-sm">
+                <Avatar className="w-6 h-6 shrink-0 ring-1 ring-white/25">
+                  <AvatarImage src={getAvatarImage(uid)} />
+                  <AvatarFallback className="text-[10px]">
+                    {getInitials(getDisplayName(uid), undefined)}
+                  </AvatarFallback>
+                </Avatar>
+                <p className="text-[11px] leading-tight text-white/95 truncate">
+                  {getDisplayName(uid)}
+                </p>
+              </div>
+            </motion.div>
+          ));
+        })}
       </div>
     );
   };
