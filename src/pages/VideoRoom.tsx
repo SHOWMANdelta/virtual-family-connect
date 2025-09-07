@@ -30,6 +30,8 @@ import { useState, useEffect, useRef } from "react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
+import { Slider } from "@/components/ui/slider";
+import { Volume2, VolumeX } from "lucide-react";
 
 export default function VideoRoom() {
   const { roomId } = useParams();
@@ -644,7 +646,7 @@ export default function VideoRoom() {
         }
       }
 
-      // Notify if tracks end (e.g., device unplugged,, permission revoked)
+      // Notify if tracks end (e.g., device unplugged, permission revoked)
       stream.getTracks().forEach((t) => {
         t.onended = () => {
           toast.warning(`${t.kind === "video" ? "Camera" : "Microphone"} stopped`);
@@ -819,6 +821,33 @@ export default function VideoRoom() {
     } catch (error) {
       console.error("Error with screen sharing:", error);
       toast.error("Could not start screen sharing");
+    }
+  };
+
+  // Add: per-remote element and volume refs
+  const remoteVideoElsRef = useRef<Map<string, HTMLVideoElement>>(new Map());
+  const remoteVolumeRef = useRef<Map<string, number>>(new Map()); // uid -> volume (0..1)
+  const remotePrevVolRef = useRef<Map<string, number>>(new Map()); // uid -> last nonzero
+
+  // Add: helpers to control remote volumes
+  const setRemoteVolume = (uid: string, vol: number) => {
+    if (vol > 0) {
+      remotePrevVolRef.current.set(uid, vol);
+    }
+    remoteVolumeRef.current.set(uid, vol);
+    const el = remoteVideoElsRef.current.get(uid);
+    if (el) el.volume = vol;
+    // Trigger re-render for slider controlled value
+    forceRender((n) => n + 1);
+  };
+
+  const toggleRemoteMute = (uid: string) => {
+    const cur = remoteVolumeRef.current.get(uid) ?? 1;
+    if (cur === 0) {
+      const prev = remotePrevVolRef.current.get(uid) ?? 1;
+      setRemoteVolume(uid, prev);
+    } else {
+      setRemoteVolume(uid, 0);
     }
   };
 
@@ -1170,6 +1199,9 @@ export default function VideoRoom() {
           const preferredTrack =
             videoTracks.find((t) => t.readyState === "live") || videoTracks[0] || null;
 
+          // Read current volume (default 1)
+          const vol = remoteVolumeRef.current.get(uid) ?? 1;
+
           return (
             <motion.div
               key={uid}
@@ -1190,6 +1222,9 @@ export default function VideoRoom() {
                 className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
                 ref={(el) => {
                   if (!el) return;
+                  // Store element ref for volume control
+                  remoteVideoElsRef.current.set(uid, el);
+                  // Attach track
                   if (preferredTrack) {
                     const current = (el.srcObject as MediaStream | null) || null;
                     const currentTrackId = current?.getVideoTracks?.()[0]?.id;
@@ -1199,15 +1234,16 @@ export default function VideoRoom() {
                         ms.addTrack(preferredTrack);
                       } catch {}
                       el.srcObject = ms;
-                      el.muted = true; // Start muted to satisfy autoplay policies
-                      // Attach track-level diagnostics
+                      el.muted = true; // start muted for autoplay policies; user can unmute with slider icon
+                      // Apply persisted volume
+                      el.volume = remoteVolumeRef.current.get(uid) ?? 1;
+
                       preferredTrack.onended = () => {
                         toastOnce(`remote:${uid}:trackended:${preferredTrack.id}`, () =>
                           toast.warning(`${getDisplayName(uid)}'s video stopped`)
                         );
                       };
                       preferredTrack.onmute = () => {
-                        // Avoid toast spam; log instead
                         console.debug(`Remote video track muted for ${getDisplayName(uid)}`);
                       };
                       preferredTrack.onunmute = () => {
@@ -1219,9 +1255,11 @@ export default function VideoRoom() {
                           toast.info(`Tap to play ${getDisplayName(uid)}'s video`)
                         );
                       });
+                    } else {
+                      // Ensure volume sync if same track
+                      el.volume = remoteVolumeRef.current.get(uid) ?? 1;
                     }
                   } else {
-                    // No video track: clear srcObject to avoid stale feed
                     if (el.srcObject) el.srcObject = null;
                   }
                 }}
@@ -1244,6 +1282,8 @@ export default function VideoRoom() {
                 }}
                 onLoadedMetadata={(e) => {
                   const el = e.currentTarget;
+                  // Keep volume in sync
+                  el.volume = remoteVolumeRef.current.get(uid) ?? 1;
                   if (el.paused) {
                     el.play().catch(() => {
                       toastOnce(`remote:${uid}:loadedmetadata-play`, () =>
@@ -1287,17 +1327,36 @@ export default function VideoRoom() {
               <span className="pointer-events-none absolute top-2 left-2 text-[10px] font-semibold tracking-wide px-2 py-0.5 rounded-full bg-red-500/90 text-white shadow">
                 Live
               </span>
-              {/* name bar */}
-              <div className="absolute bottom-1 left-1 right-1 flex items-center gap-2 rounded-md px-2 py-1.5 bg-black/50 backdrop-blur-sm">
+              {/* Controls bar: name + volume */}
+              <div className="absolute bottom-1 left-1 right-1 flex items-center gap-2 rounded-md px-2 py-1.5 bg-black/55 backdrop-blur-sm">
                 <Avatar className="w-6 h-6 shrink-0 ring-1 ring-white/25">
                   <AvatarImage src={getAvatarImage(uid)} />
                   <AvatarFallback className="text-[10px]">
                     {getInitials(getDisplayName(uid), undefined)}
                   </AvatarFallback>
                 </Avatar>
-                <p className="text-[11px] leading-tight text-white/95 truncate">
+                <p className="text-[11px] leading-tight text-white/95 truncate flex-1">
                   {getDisplayName(uid)}
                 </p>
+                <button
+                  type="button"
+                  onClick={() => toggleRemoteMute(uid)}
+                  className="text-white/90 hover:text-white transition-colors"
+                  aria-label={vol === 0 ? "Unmute participant" : "Mute participant"}
+                  title={vol === 0 ? "Unmute" : "Mute"}
+                >
+                  {vol === 0 ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
+                </button>
+                <div className="w-24 pl-1">
+                  <Slider
+                    value={[vol]}
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    onValueChange={([v]) => setRemoteVolume(uid, v)}
+                    aria-label="Participant volume"
+                  />
+                </div>
               </div>
             </motion.div>
           );
