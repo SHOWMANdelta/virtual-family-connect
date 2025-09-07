@@ -19,6 +19,7 @@ import type * as auth from "../auth.js";
 import type * as connections from "../connections.js";
 import type * as http from "../http.js";
 import type * as messages from "../messages.js";
+import type * as notifications from "../notifications.js";
 import type * as rooms from "../rooms.js";
 import type * as users from "../users.js";
 
@@ -37,6 +38,7 @@ declare const fullApi: ApiFromModules<{
   connections: typeof connections;
   http: typeof http;
   messages: typeof messages;
+  notifications: typeof notifications;
   rooms: typeof rooms;
   users: typeof users;
 }>;

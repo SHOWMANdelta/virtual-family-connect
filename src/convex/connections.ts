@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { getCurrentUser } from "./users";
+import { Id } from "./_generated/dataModel";
 
 export const requestConnection = mutation({
   args: {
@@ -143,5 +144,99 @@ export const getPendingRequests = query({
     );
 
     return pendingWithUsers;
+  },
+});
+
+export const initiateCall = mutation({
+  args: {
+    connectionId: v.id("connections"),
+    roomType: v.optional(v.union(v.literal("family"), v.literal("consultation"), v.literal("monitoring"))),
+  },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUser(ctx);
+    if (!user) throw new Error("Must be authenticated");
+
+    const connection = await ctx.db.get(args.connectionId);
+    if (!connection) throw new Error("Connection not found");
+    if (!connection.isApproved) throw new Error("Connection not approved");
+
+    const isParticipant =
+      connection.patientId === user._id || connection.relativeId === user._id;
+    if (!isParticipant) throw new Error("Not authorized for this connection");
+
+    const recipientId: Id<"users"> =
+      connection.patientId === user._id ? connection.relativeId : connection.patientId;
+
+    // Create a room for the call
+    const caller = await ctx.db.get(user._id);
+    const recipient = await ctx.db.get(recipientId);
+    const roomId = await ctx.db.insert("rooms", {
+      name: `Call: ${caller?.name || caller?.email || "User"} ↔ ${recipient?.name || recipient?.email || "User"}`,
+      description: "Direct call initiated from Connections",
+      createdBy: user._id,
+      isActive: true,
+      maxParticipants: 10,
+      roomType: args.roomType || "family",
+      scheduledTime: undefined,
+      endTime: undefined,
+    });
+
+    // Add caller as host participant
+    await ctx.db.insert("roomParticipants", {
+      roomId,
+      userId: user._id,
+      joinedAt: Date.now(),
+      isHost: true,
+      permissions: { canShare: true, canMute: true, canRecord: true },
+    });
+
+    // Send notification to recipient
+    await ctx.db.insert("notifications", {
+      recipientId,
+      senderId: user._id,
+      type: "call",
+      title: `Incoming video call from ${caller?.name || caller?.email || "a contact"}`,
+      body: "Tap to join the call.",
+      roomId,
+      read: false,
+      createdAt: Date.now(),
+    });
+
+    return roomId;
+  },
+});
+
+export const sendMessageToConnection = mutation({
+  args: {
+    connectionId: v.id("connections"),
+    content: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUser(ctx);
+    if (!user) throw new Error("Must be authenticated");
+
+    const connection = await ctx.db.get(args.connectionId);
+    if (!connection) throw new Error("Connection not found");
+    if (!connection.isApproved) throw new Error("Connection not approved");
+
+    const isParticipant =
+      connection.patientId === user._id || connection.relativeId === user._id;
+    if (!isParticipant) throw new Error("Not authorized for this connection");
+
+    const recipientId: Id<"users"> =
+      connection.patientId === user._id ? connection.relativeId : connection.patientId;
+
+    await ctx.db.insert("notifications", {
+      recipientId,
+      senderId: user._id,
+      type: "message",
+      title: `${user.name || user.email || "Contact"} sent you a message`,
+      body: args.content,
+      roomId: undefined,
+      read: false,
+      createdAt: Date.now(),
+    });
+
+    return true;
   },
 });

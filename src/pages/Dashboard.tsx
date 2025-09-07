@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import { useNavigate } from "react-router";
 import { toast } from "sonner";
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -34,11 +34,15 @@ export default function Dashboard() {
   const [isCreateRoomOpen, setIsCreateRoomOpen] = useState(false);
   const [isConnectOpen, setIsConnectOpen] = useState(false);
   const [isAppointmentOpen, setIsAppointmentOpen] = useState(false);
+  const [isMessageOpen, setIsMessageOpen] = useState(false);
+  const [messageText, setMessageText] = useState("");
+  const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
 
   const rooms = useQuery(api.rooms.getUserRooms);
   const connections = useQuery(api.connections.getMyConnections);
   const pendingRequests = useQuery(api.connections.getPendingRequests);
   const appointments = useQuery(api.appointments.getMyAppointments);
+  const notifications = useQuery(api.notifications.getMyNotifications);
 
   const createRoom = useMutation(api.rooms.createRoom);
   const joinRoom = useMutation(api.rooms.joinRoom);
@@ -46,6 +50,35 @@ export default function Dashboard() {
   const approveConnection = useMutation(api.connections.approveConnection);
   const createAppointment = useMutation(api.appointments.createAppointment);
   const startAppointment = useMutation(api.appointments.startAppointment);
+  const initiateCall = useMutation(api.connections.initiateCall);
+  const sendMessageToConnection = useMutation(api.connections.sendMessageToConnection);
+  const markNotificationRead = useMutation(api.notifications.markAsRead);
+
+  const shownNotifsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!notifications) return;
+    notifications.forEach((n: any) => {
+      if (shownNotifsRef.current.has(n._id)) return;
+      shownNotifsRef.current.add(n._id);
+
+      if (n.type === "call" && n.roomId) {
+        toast(`${n.title}`, {
+          description: n.body,
+          action: {
+            label: "Join",
+            onClick: async () => {
+              try {
+                await markNotificationRead({ notificationId: n._id });
+              } catch {}
+              navigate(`/room/${n.roomId}`);
+            },
+          },
+        });
+      } else if (n.type === "message") {
+        toast(`${n.title}`, { description: n.body });
+      }
+    });
+  }, [notifications, markNotificationRead, navigate]);
 
   const handleCreateRoom = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -109,6 +142,39 @@ export default function Dashboard() {
       navigate(`/room/${roomId}`);
     } catch (error) {
       toast.error("Failed to start appointment");
+    }
+  };
+
+  const handleCallConnection = async (connectionId: string) => {
+    try {
+      const roomId = await initiateCall({ connectionId: connectionId as any });
+      toast.success("Calling...");
+      navigate(`/room/${roomId}`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to initiate call");
+    }
+  };
+
+  const openMessageDialog = (connectionId: string) => {
+    setSelectedConnectionId(connectionId);
+    setMessageText("");
+    setIsMessageOpen(true);
+  };
+
+  const handleSendMessageToConnection = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!selectedConnectionId || !messageText.trim()) return;
+    try {
+      await sendMessageToConnection({
+        connectionId: selectedConnectionId as any,
+        content: messageText.trim(),
+      });
+      toast.success("Message sent");
+      setIsMessageOpen(false);
+      setMessageText("");
+      setSelectedConnectionId(null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to send message");
     }
   };
 
@@ -510,11 +576,11 @@ export default function Dashboard() {
                           </Badge>
                         </div>
                         <div className="flex space-x-2">
-                          <Button size="sm" variant="outline">
+                          <Button size="sm" variant="outline" onClick={() => openMessageDialog(connection._id)}>
                             <MessageCircle className="h-4 w-4 mr-2" />
                             Message
                           </Button>
-                          <Button size="sm" variant="outline">
+                          <Button size="sm" variant="outline" onClick={() => handleCallConnection(connection._id)}>
                             <Video className="h-4 w-4 mr-2" />
                             Call
                           </Button>
@@ -631,6 +697,34 @@ export default function Dashboard() {
             </Card>
           </TabsContent>
         </Tabs>
+
+        <Dialog open={isMessageOpen} onOpenChange={setIsMessageOpen}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Send a message</DialogTitle>
+              <DialogDescription>Send a quick message to your connection.</DialogDescription>
+            </DialogHeader>
+            <form onSubmit={handleSendMessageToConnection}>
+              <div className="space-y-4">
+                <div>
+                  <Label htmlFor="messageText">Message</Label>
+                  <Textarea
+                    id="messageText"
+                    value={messageText}
+                    onChange={(e) => setMessageText(e.target.value)}
+                    placeholder="Type your message..."
+                    required
+                  />
+                </div>
+              </div>
+              <DialogFooter className="mt-6">
+                <Button type="submit" disabled={!messageText.trim()}>
+                  Send
+                </Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
       </div>
     </div>
   );

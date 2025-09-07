@@ -115,6 +115,20 @@ const schema = defineSchema(
     }).index("by_room", ["roomId"])
       .index("by_sender", ["senderId"]),
 
+    // Add notifications table for call/text notifications
+    notifications: defineTable({
+      recipientId: v.id("users"),
+      senderId: v.id("users"),
+      type: v.union(v.literal("call"), v.literal("message")),
+      title: v.string(),
+      body: v.optional(v.string()),
+      roomId: v.optional(v.id("rooms")),
+      read: v.boolean(),
+      readAt: v.optional(v.number()),
+      createdAt: v.number(),
+    }).index("by_recipient", ["recipientId"])
+      .index("by_read", ["read"]),
+
     // Appointments
     appointments: defineTable({
       patientId: v.id("users"),
