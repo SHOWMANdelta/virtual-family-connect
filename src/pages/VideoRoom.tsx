@@ -61,6 +61,9 @@ export default function VideoRoom() {
   const iceGatheringTimersRef = useRef<Map<string, number>>(new Map());
   const mediaWatchdogRef = useRef<Map<string, number>>(new Map());
 
+  // NEW: per‑peer ICE restart debouncer
+  const iceRestartTimersRef = useRef<Map<string, number>>(new Map());
+
   // Helper: detect if we already have live local media (works across browsers)
   const hasActiveLocalMedia = () => {
     const s = localStreamRef.current;
@@ -240,6 +243,70 @@ export default function VideoRoom() {
                 )}. Tips: disable VPN, check firewall, ensure both sides use HTTPS, or switch networks/Wi‑Fi bands.`
               : `Connection to ${getDisplayName(
                   peerUserId
+                )} looks unstable. Checking routes and attempting to recover...`
+          );
+        }
+
+        // Debounced ICE restart + gentle renegotiation
+        const prev = iceRestartTimersRef.current.get(peerUserId);
+        if (prev) clearTimeout(prev);
+        const t = window.setTimeout(async () => {
+          try {
+            // Try ICE restart (supported in modern browsers)
+            if (typeof pc.restartIce === "function") {
+              pc.restartIce();
+            }
+            // If stable, send a fresh offer to re-sync routes
+            if (pc.signalingState === "stable") {
+              await createOfferTo(peerUserId);
+            }
+          } catch (e) {
+            console.warn("ICE restart/renegotiation attempt failed", e);
+          } finally {
+            iceRestartTimersRef.current.delete(peerUserId);
+          }
+        }, 3000);
+        iceRestartTimersRef.current.set(peerUserId, t);
+      }
+    };
+
+    // Surface ICE candidate errors with diagnostics
+    pc.onicecandidateerror = (event: any) => {
+      try {
+        const code = event?.errorCode;
+        const text = event?.errorText;
+        const url = event?.url;
+        const host = event?.hostCandidate;
+        const srv = event?.url || event?.urlCandidate;
+        const details = [url || srv, host].filter(Boolean).join(" • ");
+        const key = `${peerUserId}:icecandidateerror:${code}:${host || ""}`;
+        if (!connectionAlertsRef.current.has(key)) {
+          connectionAlertsRef.current.add(key);
+          toast.error(
+            `Connection routing error with ${getDisplayName(
+              peerUserId
+            )}${code ? ` (code ${code})` : ""}. ${
+              text ? text + ". " : ""
+            }Try disabling VPN, allowing WebRTC in your firewall, or switching networks.${details ? ` [${details}]` : ""}`
+          );
+        }
+      } catch (err) {
+        console.warn("onicecandidateerror handling failed", err);
+      }
+    };
+
+    pc.oniceconnectionstatechange = () => {
+      if (pc.iceConnectionState === "failed" || pc.iceConnectionState === "disconnected") {
+        const key = `${peerUserId}:ice:${pc.iceConnectionState}`;
+        if (!connectionAlertsRef.current.has(key)) {
+          connectionAlertsRef.current.add(key);
+          toast.warning(
+            pc.iceConnectionState === "failed"
+              ? `Couldn't establish a stable path to ${getDisplayName(
+                  peerUserId
+                )}. Tips: disable VPN, check firewall, ensure both sides use HTTPS, or switch networks/Wi‑Fi bands.`
+              : `Connection to ${getDisplayName(
+                  peerUserId
                 )} looks unstable. Check your Wi‑Fi/cellular signal or switch networks.`
           );
         }
@@ -266,10 +333,10 @@ export default function VideoRoom() {
       if (pc.iceGatheringState === "gathering") {
         const timer = window.setTimeout(() => {
           toast.warning(
-            `Finding network routes to ${getDisplayName(peerUserId)} is taking longer than usual. Check network/firewall or switch networks.`
+            `Finding network routes to ${getDisplayName(peerUserId)} is taking longer than usual. We'll keep trying in the background. If it persists, check VPN/firewall or switch networks.`
           );
           iceGatheringTimersRef.current.delete(peerUserId);
-        }, 10000);
+        }, 20000); // increase threshold to reduce noise
         iceGatheringTimersRef.current.set(peerUserId, timer);
       }
       if (pc.iceGatheringState === "complete") {
@@ -1045,7 +1112,7 @@ export default function VideoRoom() {
                       );
                     };
                     t.onmute = () => {
-                      // Avoid toast spam; log for diagnostics
+                      // Avoid toast spam; log instead
                       console.debug(`Remote ${t.kind} track muted for ${getDisplayName(uid)}`);
                     };
                     t.onunmute = () => {
