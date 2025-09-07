@@ -1000,12 +1000,12 @@ export default function VideoRoom() {
       <div
         className="
           absolute bottom-4 right-0 left-0 md:left-auto md:right-6 md:bottom-6
-          flex md:grid md:grid-cols-2 lg:grid-cols-3
+          flex md:grid md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4
           gap-3
-          max-h-[28vh] md:max-h-[40vh]
+          max-h-[28vh] md:max-h-[42vh]
           overflow-x-auto md:overflow-y-auto
-          px-3 md:p-2
-          rounded-2xl bg-black/20 backdrop-blur-md border border-white/10 shadow-2xl
+          px-3 md:p-3
+          rounded-2xl bg-black/30 backdrop-blur-xl border border-white/10 shadow-2xl
         "
       >
         {entries.map(([uid, stream]) => (
@@ -1014,16 +1014,18 @@ export default function VideoRoom() {
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
             className="
-              relative
+              group relative
               flex-none
-              w-40 h-24 xs:w-48 xs:h-28 sm:w-56 sm:h-32 md:w-44 md:h-28 lg:w-52 lg:h-32
-              rounded-xl overflow-hidden ring-1 ring-white/15 shadow-lg bg-gray-800
+              w-44 h-28 xs:w-52 xs:h-32 sm:w-60 sm:h-36 md:w-48 md:h-32 lg:w-56 lg:h-36
+              rounded-xl overflow-hidden
+              ring-2 ring-white/10 hover:ring-white/25 transition-all duration-200
+              shadow-[0_10px_30px_rgba(0,0,0,0.45)] bg-gray-850
             "
           >
             <video
               autoPlay
               playsInline
-              className="w-full h-full object-cover"
+              className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
               ref={(el) => {
                 if (el && el.srcObject !== stream) {
                   el.srcObject = stream;
@@ -1048,15 +1050,20 @@ export default function VideoRoom() {
               muted
               aria-label={`Remote video from ${getDisplayName(uid)}. Tap to toggle audio.`}
             />
-            <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-black/10" />
-            <div className="absolute bottom-1 left-1 right-1 flex items-center gap-2 rounded-md p-1.5 bg-black/40 backdrop-blur-sm">
-              <Avatar className="w-6 h-6 shrink-0 ring-1 ring-white/20">
+            {/* top gradient and live badge */}
+            <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/45 via-transparent to-black/20" />
+            <span className="pointer-events-none absolute top-2 left-2 text-[10px] font-semibold tracking-wide px-2 py-0.5 rounded-full bg-red-500/90 text-white shadow">
+              Live
+            </span>
+            {/* name bar */}
+            <div className="absolute bottom-1 left-1 right-1 flex items-center gap-2 rounded-md px-2 py-1.5 bg-black/45 backdrop-blur-sm">
+              <Avatar className="w-6 h-6 shrink-0 ring-1 ring-white/25">
                 <AvatarImage src={getAvatarImage(uid)} />
                 <AvatarFallback className="text-[10px]">
                   {getInitials(getDisplayName(uid), undefined)}
                 </AvatarFallback>
               </Avatar>
-              <p className="text-[11px] leading-tight text-white/90 truncate">
+              <p className="text-[11px] leading-tight text-white/95 truncate">
                 {getDisplayName(uid)}
               </p>
             </div>
@@ -1277,12 +1284,17 @@ export default function VideoRoom() {
                 .map((participant) => (
                   <motion.div
                     key={participant._id}
-                    initial={{ opacity: 0, scale: 0.8 }}
+                    initial={{ opacity: 0, scale: 0.85 }}
                     animate={{ opacity: 1, scale: 1 }}
-                    className="w-32 h-24 bg-gray-700 rounded-lg overflow-hidden relative"
+                    className="
+                      w-36 h-24 rounded-xl overflow-hidden relative
+                      ring-2 ring-white/10 hover:ring-white/25 transition-all duration-200
+                      bg-gray-800 shadow-[0_8px_24px_rgba(0,0,0,0.45)] backdrop-blur
+                    "
                   >
-                    <div className="w-full h-full flex items-center justify-center">
-                      <Avatar className="w-12 h-12">
+                    <div className="w-full h-full flex items-center justify-center relative">
+                      <div className="absolute inset-0 bg-gradient-to-b from-black/20 via-transparent to-black/30" />
+                      <Avatar className="w-12 h-12 ring-1 ring-white/20 shadow">
                         <AvatarImage src={participant.user?.image} />
                         <AvatarFallback>
                           {getInitials(participant.user?.name, participant.user?.email)}
@@ -1290,7 +1302,7 @@ export default function VideoRoom() {
                       </Avatar>
                     </div>
                     <div className="absolute bottom-1 left-1 right-1">
-                      <p className="text-xs text-white truncate bg-black/50 px-1 rounded">
+                      <p className="text-xs text-white truncate bg-black/50 px-2 py-1 rounded-md backdrop-blur">
                         {participant.user?.name || participant.user?.email}
                       </p>
                     </div>
