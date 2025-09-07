@@ -1149,16 +1149,22 @@ export default function VideoRoom() {
     return (
       <div
         className="
-          absolute top-24 right-4 bottom-28
+          absolute top-20 right-4 bottom-28
           z-20
-          w-64 sm:w-72 md:w-80
+          w-72 md:w-80 lg:w-96
           overflow-y-auto
-          px-2
-          rounded-2xl bg-black/35 backdrop-blur-xl border border-white/10 shadow-2xl
-          flex flex-col gap-3
+          p-3
+          rounded-2xl bg-black/40 backdrop-blur-xl border border-white/10 shadow-2xl
+          flex flex-col gap-4
         "
         aria-label="Participants video panel"
       >
+        {/* Panel header */}
+        <div className="flex items-center justify-between px-1">
+          <p className="text-xs font-semibold tracking-wide text-white/90">Participants</p>
+          <span className="text-[10px] text-white/60">{entries.length}</span>
+        </div>
+
         {entries.map(([uid, stream]) => {
           const videoTracks = stream.getVideoTracks();
           const preferredTrack =
@@ -1171,10 +1177,10 @@ export default function VideoRoom() {
               animate={{ opacity: 1, scale: 1 }}
               className="
                 group relative
-                w-full h-40 sm:h-44 md:h-48
+                w-full h-44 sm:h-48
                 rounded-xl overflow-hidden
-                ring-2 ring-white/10 hover:ring-white/25 transition-all duration-200
-                shadow-[0_10px_30px_rgba(0,0,0,0.45)] bg-gray-850
+                ring-1 ring-white/15 hover:ring-white/30 transition-all duration-200
+                shadow-[0_12px_32px_rgba(0,0,0,0.5)] bg-gray-900/70
                 flex
               "
             >
@@ -1277,12 +1283,12 @@ export default function VideoRoom() {
                 aria-label={`Remote video from ${getDisplayName(uid)}. Tap to toggle audio.`}
               />
               {/* top gradient and live badge */}
-              <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/45 via-transparent to-black/20" />
+              <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-black/20" />
               <span className="pointer-events-none absolute top-2 left-2 text-[10px] font-semibold tracking-wide px-2 py-0.5 rounded-full bg-red-500/90 text-white shadow">
                 Live
               </span>
               {/* name bar */}
-              <div className="absolute bottom-1 left-1 right-1 flex items-center gap-2 rounded-md px-2 py-1.5 bg-black/45 backdrop-blur-sm">
+              <div className="absolute bottom-1 left-1 right-1 flex items-center gap-2 rounded-md px-2 py-1.5 bg-black/50 backdrop-blur-sm">
                 <Avatar className="w-6 h-6 shrink-0 ring-1 ring-white/25">
                   <AvatarImage src={getAvatarImage(uid)} />
                   <AvatarFallback className="text-[10px]">
