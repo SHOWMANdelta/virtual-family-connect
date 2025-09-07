@@ -86,6 +86,17 @@ export default function VideoRoom() {
 
     pc = new RTCPeerConnection(rtcConfig);
 
+    // If local media isn't ready yet, proactively add recvonly transceivers
+    // so we can still receive remote tracks immediately.
+    if (!localStreamRef.current) {
+      try {
+        pc.addTransceiver("video", { direction: "recvonly" });
+        pc.addTransceiver("audio", { direction: "recvonly" });
+      } catch (e) {
+        console.warn("Failed to add recvonly transceivers", e);
+      }
+    }
+
     // Add local tracks
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach((track) => {
@@ -589,8 +600,13 @@ export default function VideoRoom() {
               ref={(el) => {
                 if (el && el.srcObject !== stream) {
                   el.srcObject = stream;
+                  // Explicitly try to play to work around autoplay policies
+                  el.play().catch((err) => {
+                    console.warn("Auto-play failed for remote video; will rely on user gesture", err);
+                  });
                 }
               }}
+              // Keep unmuted so host can hear; autoplay should succeed after user interactions on the page
               muted={false}
             />
           </motion.div>
