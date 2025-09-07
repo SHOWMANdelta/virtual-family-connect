@@ -1127,30 +1127,33 @@ export default function VideoRoom() {
     return (
       <div
         className="
-          absolute bottom-4 right-0 left-0 md:left-auto md:right-6 md:bottom-6
-          flex md:grid md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4
-          gap-3
-          max-h-[28vh] md:max-h-[42vh]
-          overflow-x-auto md:overflow-y-auto
-          px-3 md:p-3
-          rounded-2xl bg-black/30 backdrop-blur-xl border border-white/10 shadow-2xl
+          absolute top-24 right-4 bottom-28
+          z-20
+          w-64 sm:w-72 md:w-80
+          overflow-y-auto
+          px-2
+          rounded-2xl bg-black/35 backdrop-blur-xl border border-white/10 shadow-2xl
+          flex flex-col gap-3
         "
+        aria-label="Participants video panel"
       >
-        {entries.flatMap(([uid, stream]) => {
+        {entries.map(([uid, stream]) => {
           const videoTracks = stream.getVideoTracks();
-          const toRender = videoTracks.length ? videoTracks : [null as unknown as MediaStreamTrack];
-          return toRender.map((track, idx) => (
+          const preferredTrack =
+            videoTracks.find((t) => t.readyState === "live") || videoTracks[0] || null;
+
+          return (
             <motion.div
-              key={`${uid}:${track ? track.id : "no-video"}:${idx}`}
-              initial={{ opacity: 0, scale: 0.95 }}
+              key={uid}
+              initial={{ opacity: 0, scale: 0.96 }}
               animate={{ opacity: 1, scale: 1 }}
               className="
                 group relative
-                flex-none
-                w-44 h-28 xs:w-52 xs:h-32 sm:w-60 sm:h-36 md:w-48 md:h-32 lg:w-56 lg:h-36
+                w-full h-40 sm:h-44 md:h-48
                 rounded-xl overflow-hidden
                 ring-2 ring-white/10 hover:ring-white/25 transition-all duration-200
                 shadow-[0_10px_30px_rgba(0,0,0,0.45)] bg-gray-850
+                flex
               "
             >
               <video
@@ -1159,33 +1162,32 @@ export default function VideoRoom() {
                 className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
                 ref={(el) => {
                   if (!el) return;
-                  if (track) {
-                    // Attach single video track to its own MediaStream only if different
+                  if (preferredTrack) {
                     const current = (el.srcObject as MediaStream | null) || null;
                     const currentTrackId = current?.getVideoTracks?.()[0]?.id;
-                    if (currentTrackId !== track.id) {
+                    if (currentTrackId !== preferredTrack.id) {
                       const ms = new MediaStream();
                       try {
-                        ms.addTrack(track);
+                        ms.addTrack(preferredTrack);
                       } catch {}
                       el.srcObject = ms;
                       el.muted = true; // Start muted to satisfy autoplay policies
                       // Attach track-level diagnostics
-                      track.onended = () => {
-                        toastOnce(`remote:${uid}:trackended:${track.id}`, () =>
+                      preferredTrack.onended = () => {
+                        toastOnce(`remote:${uid}:trackended:${preferredTrack.id}`, () =>
                           toast.warning(`${getDisplayName(uid)}'s video stopped`)
                         );
                       };
-                      track.onmute = () => {
+                      preferredTrack.onmute = () => {
                         // Avoid toast spam; log instead
                         console.debug(`Remote video track muted for ${getDisplayName(uid)}`);
                       };
-                      track.onunmute = () => {
+                      preferredTrack.onunmute = () => {
                         console.debug(`Remote video track unmuted for ${getDisplayName(uid)}`);
                       };
                       el.play().catch((err) => {
                         console.warn("Auto-play failed for remote video track", err);
-                        toastOnce(`remote:${uid}:tap-to-play:${track.id}`, () =>
+                        toastOnce(`remote:${uid}:tap-to-play:${preferredTrack.id}`, () =>
                           toast.info(`Tap to play ${getDisplayName(uid)}'s video`)
                         );
                       });
@@ -1265,7 +1267,7 @@ export default function VideoRoom() {
                 </p>
               </div>
             </motion.div>
-          ));
+          );
         })}
       </div>
     );
@@ -1497,8 +1499,8 @@ export default function VideoRoom() {
             )}
 
             {/* Video Controls Overlay */}
-            <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2">
-              <div className="flex items-center space-x-4 bg-gray-800/80 backdrop-blur-sm rounded-full px-6 py-3">
+            <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-30">
+              <div className="flex items-center space-x-4 bg-gray-900/90 backdrop-blur-md rounded-full px-7 py-4 shadow-2xl ring-1 ring-white/10">
                 <Button
                   variant="ghost"
                   size="sm"
