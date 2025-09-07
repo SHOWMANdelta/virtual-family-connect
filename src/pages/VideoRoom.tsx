@@ -582,16 +582,27 @@ export default function VideoRoom() {
     return "U";
   };
 
+  // Add: helpers to show participant info on tiles
+  const getDisplayName = (uid: string) => {
+    const p = participants?.find((x: any) => String(x.user?._id) === String(uid));
+    return p?.user?.name || p?.user?.email || "Participant";
+  };
+
+  const getAvatarImage = (uid: string) => {
+    const p = participants?.find((x: any) => String(x.user?._id) === String(uid));
+    return p?.user?.image;
+  };
+
   const RemoteVideos = () => {
     const entries = Array.from(remoteStreamsRef.current.entries());
     return (
-      <div className="absolute top-4 right-4 flex flex-col gap-2 max-h-[60vh] overflow-y-auto">
+      <div className="absolute bottom-6 right-6 grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 gap-3 max-h-[40vh] overflow-y-auto p-2 rounded-2xl bg-black/20 backdrop-blur-md border border-white/10 shadow-2xl">
         {entries.map(([uid, stream]) => (
           <motion.div
             key={uid}
-            initial={{ opacity: 0, scale: 0.9 }}
+            initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
-            className="w-40 h-28 bg-gray-700 rounded-lg overflow-hidden relative"
+            className="relative w-44 h-28 sm:w-52 sm:h-32 rounded-xl overflow-hidden ring-1 ring-white/15 shadow-lg bg-gray-800"
           >
             <video
               autoPlay
@@ -600,15 +611,25 @@ export default function VideoRoom() {
               ref={(el) => {
                 if (el && el.srcObject !== stream) {
                   el.srcObject = stream;
-                  // Explicitly try to play to work around autoplay policies
                   el.play().catch((err) => {
                     console.warn("Auto-play failed for remote video; will rely on user gesture", err);
                   });
                 }
               }}
-              // Keep unmuted so host can hear; autoplay should succeed after user interactions on the page
               muted={false}
             />
+            <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-black/10" />
+            <div className="absolute bottom-1 left-1 right-1 flex items-center gap-2 rounded-md p-1.5 bg-black/40 backdrop-blur-sm">
+              <Avatar className="w-6 h-6 shrink-0 ring-1 ring-white/20">
+                <AvatarImage src={getAvatarImage(uid)} />
+                <AvatarFallback className="text-[10px]">
+                  {getInitials(getDisplayName(uid), undefined)}
+                </AvatarFallback>
+              </Avatar>
+              <p className="text-[11px] leading-tight text-white/90 truncate">
+                {getDisplayName(uid)}
+              </p>
+            </div>
           </motion.div>
         ))}
       </div>
