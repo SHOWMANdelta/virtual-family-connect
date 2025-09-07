@@ -125,10 +125,43 @@ export default function VideoRoom() {
       });
     }
 
-    // When remote track arrives
+    // When remote track arrives: handle browsers that don't populate event.streams
     pc.ontrack = (event) => {
-      const [stream] = event.streams;
-      if (!stream) return;
+      // Create or reuse a media stream container for this peer
+      let stream = remoteStreamsRef.current.get(peerUserId);
+      if (!stream) {
+        stream = new MediaStream();
+        remoteStreamsRef.current.set(peerUserId, stream);
+      }
+
+      // Add the incoming track (avoid duplicates)
+      if (event.track) {
+        const exists = stream.getTracks().some((t) => t.id === event.track.id);
+        if (!exists) {
+          try {
+            stream.addTrack(event.track);
+          } catch (e) {
+            console.warn("Failed to add remote track", e);
+          }
+        }
+      }
+
+      // If event.streams has a stream, merge its tracks as well (covers Chrome)
+      if (event.streams && event.streams[0]) {
+        const s0 = event.streams[0];
+        s0.getTracks().forEach((t) => {
+          const exists = stream!.getTracks().some((tt) => tt.id === t.id);
+          if (!exists) {
+            try {
+              stream!.addTrack(t);
+            } catch (e) {
+              console.warn("Failed to merge track from event.streams", e);
+            }
+          }
+        });
+      }
+
+      // Save and re-render
       remoteStreamsRef.current.set(peerUserId, stream);
       forceRender((n) => n + 1);
     };
@@ -150,7 +183,6 @@ export default function VideoRoom() {
           });
         } catch (e) {
           console.error("Failed to send ICE candidate", e);
-          // One-time toast per peer to avoid spam
           const key = `${peerUserId}:signal:candidate:sendfail`;
           if (!connectionAlertsRef.current.has(key)) {
             connectionAlertsRef.current.add(key);
@@ -207,6 +239,14 @@ export default function VideoRoom() {
       }
     };
 
+    // NEW: auto-renegotiate when local tracks change or transceivers are added
+    pc.onnegotiationneeded = () => {
+      // Debounce and guard
+      const stable = pc.signalingState === "stable";
+      if (!stable) return;
+      createOfferTo(peerUserId);
+    };
+
     // NEW: observe ICE gathering; warn if it takes too long
     pc.onicegatheringstatechange = () => {
       // Clear stale timer if any
@@ -226,7 +266,6 @@ export default function VideoRoom() {
         iceGatheringTimersRef.current.set(peerUserId, timer);
       }
       if (pc.iceGatheringState === "complete") {
-        // Done gathering: clear timer if present
         const t = iceGatheringTimersRef.current.get(peerUserId);
         if (t) {
           clearTimeout(t);
@@ -235,10 +274,9 @@ export default function VideoRoom() {
       }
     };
 
-    // NEW: basic signaling state observer for debugging/problem surfacing
+    // NEW: basic signaling state observer for cleanup
     pc.onsignalingstatechange = () => {
       if (pc.signalingState === "closed") {
-        // Clean up timers when closed
         const iceTimer = iceGatheringTimersRef.current.get(peerUserId);
         if (iceTimer) {
           clearTimeout(iceTimer);
