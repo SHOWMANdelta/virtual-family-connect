@@ -1196,13 +1196,13 @@ export default function VideoRoom() {
       <div
         className="
           absolute z-20
-          inset-x-4 bottom-28
+          inset-x-4 bottom-36 pb-[env(safe-area-inset-bottom)]
           flex gap-3 overflow-x-auto
           p-3
           rounded-2xl bg-black/45 backdrop-blur-xl border border-white/10 shadow-2xl
           md:inset-auto md:top-20 md:right-4 md:bottom-28
           md:w-80 lg:w-96
-          md:flex-col md:gap-4 md:overflow-y-auto md:overflow-x-hidden
+          md:flex-col md:gap-4 md:overflow-y-auto md:overflow-x-hidden md:max-h-[60vh]
         "
         aria-label="Participants video panel"
       >
@@ -1238,7 +1238,7 @@ export default function VideoRoom() {
               <video
                 autoPlay
                 playsInline
-                className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
+                className="w-full h-full object-contain sm:object-cover"
                 ref={(el) => {
                   if (!el) return;
                   // Store element ref for volume control
@@ -1594,7 +1594,7 @@ export default function VideoRoom() {
             />
 
             {/* Self preview (PiP) */}
-            <div className="absolute bottom-24 left-4 z-30">
+            <div className="absolute bottom-28 sm:bottom-24 left-4 z-30">
               <div className="w-40 h-28 sm:w-52 sm:h-36 rounded-xl overflow-hidden ring-2 ring-white/20 shadow-[0_8px_24px_rgba(0,0,0,0.45)] bg-black/40 backdrop-blur">
                 <video
                   ref={videoRef}
@@ -1656,7 +1656,7 @@ export default function VideoRoom() {
             )}
 
             {/* Video Controls Overlay */}
-            <div className="absolute inset-x-4 bottom-4 z-50">
+            <div className="absolute inset-x-4 bottom-4 sm:bottom-5 z-50 pb-[env(safe-area-inset-bottom)]">
               <div className="flex flex-wrap items-center justify-center gap-3 sm:gap-4 bg-gray-900/95 backdrop-blur-md rounded-xl px-4 py-3 sm:rounded-full sm:px-7 sm:py-4 shadow-2xl ring-1 ring-white/10">
                 <Button
                   variant="ghost"
