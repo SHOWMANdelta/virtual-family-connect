@@ -55,6 +55,10 @@ export default function VideoRoom() {
   const remoteStreamsRef = useRef<Map<string, MediaStream>>(new Map());
   const [, forceRender] = useState(0); // trigger re-render when remote streams change
 
+  // Add: per-peer flags and candidate buffering
+  const makingOfferRef = useRef<Map<string, boolean>>(new Map()); // prevents concurrent offers
+  const pendingCandidatesRef = useRef<Map<string, RTCIceCandidateInit[]>>(new Map()); // buffer ICE until remoteDesc set
+
   const acknowledgeSignals = useMutation(api.signaling.acknowledgeSignals);
   const sendSignal = useMutation(api.signaling.sendSignal);
 
@@ -68,6 +72,12 @@ export default function VideoRoom() {
     iceServers: [
       { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] },
     ],
+  };
+
+  // Helper: establish polite role to resolve glare deterministically
+  const isPoliteWith = (peerUserId: string) => {
+    if (!user?._id) return true;
+    return String((user as any)._id) < String(peerUserId);
   };
 
   const ensurePeerConnection = (peerUserId: string) => {
@@ -112,12 +122,43 @@ export default function VideoRoom() {
       }
     };
 
+    // Add: drive negotiation in a controlled way
+    pc.onnegotiationneeded = async () => {
+      if (!roomId || !user?._id) return;
+      // Prevent concurrent offers and only negotiate when stable
+      if (makingOfferRef.current.get(peerUserId)) return;
+      if (pc!.signalingState !== "stable") return;
+      // Ensure tracks are attached
+      attachLocalTracksToPc(pc!);
+      try {
+        makingOfferRef.current.set(peerUserId, true);
+        const offer = await pc!.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true });
+        await pc!.setLocalDescription(offer);
+        await sendSignal({
+          roomId: roomId as any,
+          fromUserId: (user as any)._id,
+          toUserId: peerUserId as any,
+          kind: "offer",
+          payload: {
+            sdp: offer.sdp || "",
+            type: offer.type,
+          },
+        });
+      } catch (e) {
+        console.error("onnegotiationneeded createOffer error", e);
+      } finally {
+        makingOfferRef.current.set(peerUserId, false);
+      }
+    };
+
     pc.onconnectionstatechange = () => {
       if (pc && (pc.connectionState === "disconnected" || pc.connectionState === "failed")) {
         // Cleanup on disconnect
         pc.close();
         peerConnectionsRef.current.delete(peerUserId);
         remoteStreamsRef.current.delete(peerUserId);
+        makingOfferRef.current.delete(peerUserId);
+        pendingCandidatesRef.current.delete(peerUserId);
         forceRender((n) => n + 1);
       }
     };
@@ -129,13 +170,17 @@ export default function VideoRoom() {
   const createOfferTo = async (peerUserId: string) => {
     if (!roomId || !user?._id) return;
     const pc = ensurePeerConnection(peerUserId);
-    // Attach tracks in case they weren't present yet
     attachLocalTracksToPc(pc);
-    // Only create an offer if stable to avoid glare/state issues
+
+    // Guard against concurrent offers and invalid states
     if (pc.signalingState !== "stable") {
       return;
     }
+    if (makingOfferRef.current.get(peerUserId)) {
+      return;
+    }
     try {
+      makingOfferRef.current.set(peerUserId, true);
       const offer = await pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true });
       await pc.setLocalDescription(offer);
       await sendSignal({
@@ -150,6 +195,8 @@ export default function VideoRoom() {
       });
     } catch (e) {
       console.error("createOffer error", e);
+    } finally {
+      makingOfferRef.current.set(peerUserId, false);
     }
   };
 
@@ -295,25 +342,39 @@ export default function VideoRoom() {
       for (const s of signals) {
         try {
           const fromId = (s.fromUserId as any) as string;
+          const pc = ensurePeerConnection(fromId);
+          const polite = isPoliteWith(fromId);
+
           if (s.kind === "offer") {
-            const pc = ensurePeerConnection(fromId);
-            const remoteDesc = new RTCSessionDescription({ type: "offer", sdp: s.payload.sdp! });
-            try {
-              if (pc.signalingState !== "stable") {
-                // Try rollback if we've created an offer already
-                try {
-                  await pc.setLocalDescription({ type: "rollback" } as any);
-                } catch (e) {
-                  // If rollback fails, ignore this offer to avoid state errors
-                  console.warn("Rollback failed; ignoring offer", e);
-                  continue;
-                }
-              }
-              await pc.setRemoteDescription(remoteDesc);
-              // Only answer if we're in the correct state
-              if (pc.signalingState !== "have-remote-offer") {
+            // Glare handling: if not stable and we're impolite, ignore this offer
+            if (pc.signalingState !== "stable") {
+              if (!polite) {
+                // Ignore and let the other side proceed
                 continue;
               }
+              // Polite peer rolls back if needed
+              try {
+                await pc.setLocalDescription({ type: "rollback" } as any);
+              } catch (e) {
+                console.warn("Rollback failed; ignoring offer", e);
+                continue;
+              }
+            }
+
+            const remoteDesc = new RTCSessionDescription({ type: "offer", sdp: s.payload.sdp! });
+            try {
+              await pc.setRemoteDescription(remoteDesc);
+              // Flush any buffered ICE candidates now that remote description is set
+              const queued = pendingCandidatesRef.current.get(fromId) || [];
+              for (const cand of queued) {
+                try {
+                  await pc.addIceCandidate(cand);
+                } catch (e) {
+                  console.warn("Failed to add queued ICE candidate", e);
+                }
+              }
+              pendingCandidatesRef.current.delete(fromId);
+
               const answer = await pc.createAnswer();
               await pc.setLocalDescription(answer);
               await sendSignal({
@@ -327,7 +388,6 @@ export default function VideoRoom() {
               console.error("Error handling offer", e);
             }
           } else if (s.kind === "answer") {
-            const pc = ensurePeerConnection(fromId);
             try {
               // Only set remote answer if we actually have a local offer outstanding
               if (pc.signalingState !== "have-local-offer") {
@@ -335,28 +395,47 @@ export default function VideoRoom() {
               }
               const remoteDesc = new RTCSessionDescription({ type: "answer", sdp: s.payload.sdp! });
               await pc.setRemoteDescription(remoteDesc);
+              // Flush buffered ICE candidates once remote desc is present
+              const queued = pendingCandidatesRef.current.get(fromId) || [];
+              for (const cand of queued) {
+                try {
+                  await pc.addIceCandidate(cand);
+                } catch (e) {
+                  console.warn("Failed to add queued ICE candidate", e);
+                }
+              }
+              pendingCandidatesRef.current.delete(fromId);
             } catch (e) {
               console.error("Error handling answer", e);
             }
           } else if (s.kind === "candidate") {
-            const pc = ensurePeerConnection(fromId);
             if (s.payload.candidate) {
+              const cand: RTCIceCandidateInit = {
+                candidate: s.payload.candidate,
+                sdpMid: s.payload.sdpMid,
+                sdpMLineIndex: s.payload.sdpMLineIndex,
+              };
               try {
-                await pc.addIceCandidate({
-                  candidate: s.payload.candidate,
-                  sdpMid: s.payload.sdpMid,
-                  sdpMLineIndex: s.payload.sdpMLineIndex,
-                } as RTCIceCandidateInit);
+                // Buffer ICE if remoteDescription not set yet; else apply immediately
+                if (!pc.remoteDescription) {
+                  const arr = pendingCandidatesRef.current.get(fromId) || [];
+                  arr.push(cand);
+                  pendingCandidatesRef.current.set(fromId, arr);
+                } else {
+                  await pc.addIceCandidate(cand);
+                }
               } catch (e) {
                 console.warn("Failed to add ICE candidate", e);
               }
             }
           } else if (s.kind === "leave") {
             // Remote peer left
-            const pc = peerConnectionsRef.current.get(fromId);
-            pc?.close();
+            const leavingPc = peerConnectionsRef.current.get(fromId);
+            leavingPc?.close();
             peerConnectionsRef.current.delete(fromId);
             remoteStreamsRef.current.delete(fromId);
+            makingOfferRef.current.delete(fromId);
+            pendingCandidatesRef.current.delete(fromId);
             forceRender((n) => n + 1);
           }
         } finally {
