@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { getCurrentUser } from "./users";
 import { Id } from "./_generated/dataModel";
+import { internal } from "./_generated/api";
 
 export const requestConnection = mutation({
   args: {
@@ -22,18 +23,37 @@ export const requestConnection = mutation({
       .first();
 
     if (!patient) {
-      throw new Error("Patient not found");
+      // If the patient doesn't exist yet, still send an email invite and succeed
+      const appOrigin =
+        process.env.APP_ORIGIN ||
+        (typeof process !== "undefined" ? "http://localhost:5173" : "http://localhost:5173");
+      const inviterNameOrEmail = user.name || user.email || "A contact";
+
+      await ctx.scheduler.runAfter(
+        0,
+        internal.email.sendConnectionInvite,
+        {
+          toEmail: args.patientEmail,
+          inviterNameOrEmail,
+          relationship: args.relationship,
+          appOrigin,
+        }
+      );
+
+      // No connection record to create without a patient user; return success
+      return null;
     }
 
     if (patient._id === user._id) {
       throw new Error("Cannot connect to yourself");
     }
 
-    // Check if connection already exists
+    // Efficient duplicate check using composite index
     const existing = await ctx.db
       .query("connections")
-      .withIndex("by_patient", (q) => q.eq("patientId", patient._id))
-      .filter((q) => q.eq(q.field("relativeId"), user._id))
+      .withIndex("by_patient_and_relative", (q) =>
+        q.eq("patientId", patient._id).eq("relativeId", user._id)
+      )
       .first();
 
     if (existing) {
@@ -48,6 +68,21 @@ export const requestConnection = mutation({
       requestedBy: user._id,
       notes: args.notes,
     });
+
+    // Schedule non-blocking email invite
+    const appOrigin = process.env.APP_ORIGIN || (typeof process !== "undefined" ? "http://localhost:5173" : "http://localhost:5173");
+    const inviterNameOrEmail = user.name || user.email || "A contact";
+
+    await ctx.scheduler.runAfter(
+      0,
+      internal.email.sendConnectionInvite,
+      {
+        toEmail: patient.email || "",
+        inviterNameOrEmail,
+        relationship: args.relationship,
+        appOrigin,
+      }
+    );
 
     return connectionId;
   },

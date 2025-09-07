@@ -85,7 +85,8 @@ const schema = defineSchema(
       notes: v.optional(v.string()),
     }).index("by_patient", ["patientId"])
       .index("by_relative", ["relativeId"])
-      .index("by_approval", ["isApproved"]),
+      .index("by_approval", ["isApproved"])
+      .index("by_patient_and_relative", ["patientId", "relativeId"]),
 
     // Monitoring sessions
     monitoringSessions: defineTable({

@@ -37,6 +37,7 @@ export default function Dashboard() {
   const [isMessageOpen, setIsMessageOpen] = useState(false);
   const [messageText, setMessageText] = useState("");
   const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
+  const [connectRelationship, setConnectRelationship] = useState<string>("");
 
   const rooms = useQuery(api.rooms.getUserRooms);
   const connections = useQuery(api.connections.getMyConnections);
@@ -112,16 +113,25 @@ export default function Dashboard() {
   const handleRequestConnection = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
-    
+
+    const patientEmail = String(formData.get("patientEmail") || "").trim();
+    const notes = String(formData.get("notes") || "").trim();
+    const relationshipVal = connectRelationship.trim();
+    if (!relationshipVal) {
+      toast.error("Please select a relationship");
+      return;
+    }
+
     try {
       await requestConnection({
-        patientEmail: formData.get("patientEmail") as string,
-        relationship: formData.get("relationship") as string,
-        notes: formData.get("notes") as string,
+        patientEmail,
+        relationship: relationshipVal,
+        notes,
       });
-      
+
       toast.success("Connection request sent!");
       setIsConnectOpen(false);
+      setConnectRelationship("");
     } catch (error) {
       toast.error("Failed to send connection request");
     }
@@ -335,7 +345,7 @@ export default function Dashboard() {
                     <p className="text-sm text-gray-600">Add family members to your care network</p>
                   </div>
                 </div>
-                <Dialog open={isConnectOpen} onOpenChange={setIsConnectOpen}>
+                <Dialog open={isConnectOpen} onOpenChange={(open) => { setIsConnectOpen(open); if (!open) setConnectRelationship(""); } }>
                   <DialogTrigger asChild>
                     <Button className="w-full mt-4 bg-green-600 hover:bg-green-700">
                       Add Connection
@@ -362,7 +372,7 @@ export default function Dashboard() {
                         </div>
                         <div>
                           <Label htmlFor="relationship">Relationship</Label>
-                          <Select name="relationship" required>
+                          <Select name="relationship" required value={connectRelationship} onValueChange={setConnectRelationship}>
                             <SelectTrigger>
                               <SelectValue placeholder="Select relationship" />
                             </SelectTrigger>
@@ -375,6 +385,7 @@ export default function Dashboard() {
                               <SelectItem value="caregiver">Caregiver</SelectItem>
                             </SelectContent>
                           </Select>
+                          <input type="hidden" name="relationship" value={connectRelationship} />
                         </div>
                         <div>
                           <Label htmlFor="notes">Notes (Optional)</Label>
@@ -386,7 +397,7 @@ export default function Dashboard() {
                         </div>
                       </div>
                       <DialogFooter className="mt-6">
-                        <Button type="submit" className="w-full">
+                        <Button type="submit" className="w-full" disabled={!connectRelationship}>
                           Send Request
                         </Button>
                       </DialogFooter>
