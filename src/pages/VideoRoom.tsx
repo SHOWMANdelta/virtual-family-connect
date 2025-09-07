@@ -42,6 +42,9 @@ export default function VideoRoom() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
 
+  // Add: remember mic enabled state to prevent echo when sharing system audio
+  const wasMicEnabledRef = useRef<boolean>(true);
+
   // Track which peers we've already alerted for connection issues
   const connectionAlertsRef = useRef<Set<string>>(new Set());
 
@@ -313,13 +316,34 @@ export default function VideoRoom() {
     };
 
     try {
-      // Primary constraints
+      // Primary constraints (stronger echo suppression)
       let stream = await tryGet({
         video: { facingMode: "user" },
-        audio: { echoCancellation: true, noiseSuppression: true },
+        audio: {
+          echoCancellation: { ideal: true } as any,
+          noiseSuppression: { ideal: true } as any,
+          autoGainControl: { ideal: true } as any,
+          channelCount: { ideal: 1 } as any,
+        } as any,
       });
 
       localStreamRef.current = stream;
+
+      // Apply track-level hints and constraints
+      const mic = stream.getAudioTracks()[0];
+      if (mic) {
+        try {
+          mic.contentHint = "speech";
+          await mic.applyConstraints({
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+            channelCount: 1,
+          } as any);
+        } catch (e) {
+          console.debug("Mic track constraints not fully supported", e);
+        }
+      }
 
       // Notify if tracks end (e.g., device unplugged, permission revoked)
       stream.getTracks().forEach((t) => {
@@ -364,7 +388,28 @@ export default function VideoRoom() {
         toast.warning("Microphone unavailable. Using camera only.");
       } catch (e1: any) {
         try {
-          const audioOnly = await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
+          const audioOnly = await navigator.mediaDevices.getUserMedia({
+            video: false,
+            audio: {
+              echoCancellation: { ideal: true } as any,
+              noiseSuppression: { ideal: true } as any,
+              autoGainControl: { ideal: true } as any,
+              channelCount: { ideal: 1 } as any,
+            } as any,
+          });
+          // Apply track-level constraints if possible
+          const mic = audioOnly.getAudioTracks()[0];
+          if (mic) {
+            try {
+              mic.contentHint = "speech";
+              await mic.applyConstraints({
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true,
+                channelCount: 1,
+              } as any);
+            } catch {}
+          }
           localStreamRef.current = audioOnly;
           if (videoRef.current) {
             videoRef.current.srcObject = audioOnly;
@@ -405,8 +450,19 @@ export default function VideoRoom() {
       if (!isScreenSharing) {
         const screenStream = await navigator.mediaDevices.getDisplayMedia({
           video: true,
-          audio: true
+          // If system audio is captured, mute local mic to avoid echo
+          audio: true,
         });
+
+        // If system audio is captured, auto-mute local mic and remember prior state
+        const screenHasAudio = screenStream.getAudioTracks().length > 0;
+        const localMic = localStreamRef.current?.getAudioTracks()[0] || null;
+        if (screenHasAudio && localMic) {
+          wasMicEnabledRef.current = localMic.enabled;
+          localMic.enabled = false;
+          setIsAudioOn(false);
+          toast.info("Mic muted while sharing system audio to prevent echo");
+        }
 
         const screenVideoTrack = screenStream.getVideoTracks()[0] || null;
 
@@ -417,12 +473,20 @@ export default function VideoRoom() {
         // Replace outgoing video to peers
         replaceOutgoingVideoTrack(screenVideoTrack);
 
-        // When user stops sharing using browser UI, revert to camera
+        // When user stops sharing using browser UI, revert to camera and restore mic state
         if (screenVideoTrack) {
           screenVideoTrack.onended = async () => {
             await initializeMedia();
             const camTrack = localStreamRef.current?.getVideoTracks()[0] || null;
             replaceOutgoingVideoTrack(camTrack);
+
+            // Restore mic enabled state if we muted it
+            const mic = localStreamRef.current?.getAudioTracks()[0];
+            if (mic && screenHasAudio) {
+              mic.enabled = wasMicEnabledRef.current;
+              setIsAudioOn(mic.enabled);
+            }
+
             setIsScreenSharing(false);
           };
         }
@@ -434,6 +498,14 @@ export default function VideoRoom() {
         await initializeMedia();
         const camTrack = localStreamRef.current?.getVideoTracks()[0] || null;
         replaceOutgoingVideoTrack(camTrack);
+
+        // Restore mic state if it was changed
+        const mic = localStreamRef.current?.getAudioTracks()[0];
+        if (mic) {
+          mic.enabled = wasMicEnabledRef.current;
+          setIsAudioOn(mic.enabled);
+        }
+
         setIsScreenSharing(false);
         toast.success("Screen sharing stopped");
       }
