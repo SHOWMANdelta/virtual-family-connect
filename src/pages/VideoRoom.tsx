@@ -596,13 +596,28 @@ export default function VideoRoom() {
   const RemoteVideos = () => {
     const entries = Array.from(remoteStreamsRef.current.entries());
     return (
-      <div className="absolute bottom-6 right-6 grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 gap-3 max-h-[40vh] overflow-y-auto p-2 rounded-2xl bg-black/20 backdrop-blur-md border border-white/10 shadow-2xl">
+      <div
+        className="
+          absolute bottom-4 right-0 left-0 md:left-auto md:right-6 md:bottom-6
+          flex md:grid md:grid-cols-2 lg:grid-cols-3
+          gap-3
+          max-h-[28vh] md:max-h-[40vh]
+          overflow-x-auto md:overflow-y-auto
+          px-3 md:p-2
+          rounded-2xl bg-black/20 backdrop-blur-md border border-white/10 shadow-2xl
+        "
+      >
         {entries.map(([uid, stream]) => (
           <motion.div
             key={uid}
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
-            className="relative w-44 h-28 sm:w-52 sm:h-32 rounded-xl overflow-hidden ring-1 ring-white/15 shadow-lg bg-gray-800"
+            className="
+              relative
+              flex-none
+              w-40 h-24 xs:w-48 xs:h-28 sm:w-56 sm:h-32 md:w-44 md:h-28 lg:w-52 lg:h-32
+              rounded-xl overflow-hidden ring-1 ring-white/15 shadow-lg bg-gray-800
+            "
           >
             <video
               autoPlay
