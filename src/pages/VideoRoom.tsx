@@ -50,6 +50,13 @@ export default function VideoRoom() {
   // Track which peers we've already alerted for connection issues
   const connectionAlertsRef = useRef<Set<string>>(new Set());
 
+  // Helper: emit a one-time toast using a unique key
+  const toastOnce = (key: string, fn: () => void) => {
+    if (connectionAlertsRef.current.has(key)) return;
+    connectionAlertsRef.current.add(key);
+    fn();
+  };
+
   // NEW: timers for ICE gathering and media watchdogs per peer
   const iceGatheringTimersRef = useRef<Map<string, number>>(new Map());
   const mediaWatchdogRef = useRef<Map<string, number>>(new Map());
@@ -1030,9 +1037,27 @@ export default function VideoRoom() {
                 if (el && el.srcObject !== stream) {
                   el.srcObject = stream;
                   el.muted = true; // Start muted to satisfy autoplay policies
+                  // Attach track-level diagnostics
+                  stream.getTracks().forEach((t) => {
+                    t.onended = () => {
+                      toastOnce(`remote:${uid}:trackended:${t.kind}`, () =>
+                        toast.warning(`${getDisplayName(uid)}'s ${t.kind} stopped`)
+                      );
+                    };
+                    t.onmute = () => {
+                      // Avoid toast spam; log for diagnostics
+                      console.debug(`Remote ${t.kind} track muted for ${getDisplayName(uid)}`);
+                    };
+                    t.onunmute = () => {
+                      console.debug(`Remote ${t.kind} track unmuted for ${getDisplayName(uid)}`);
+                    };
+                  });
+                  // Try to start playback
                   el.play().catch((err) => {
                     console.warn("Auto-play failed for remote video; will rely on user gesture", err);
-                    toast.info(`Tap video to play for ${getDisplayName(uid)}`);
+                    toastOnce(`remote:${uid}:tap-to-play`, () =>
+                      toast.info(`Tap video to play for ${getDisplayName(uid)}`)
+                    );
                   });
                 }
               }}
@@ -1042,11 +1067,47 @@ export default function VideoRoom() {
                   el.muted = false;
                   el.play().catch((err) => {
                     console.warn("Play after unmute failed", err);
-                    toast.info(`Tap again to play ${getDisplayName(uid)}`);
+                    toastOnce(`remote:${uid}:tap-again`, () =>
+                      toast.info(`Tap again to play ${getDisplayName(uid)}`)
+                    );
                   });
                 }
               }}
-              onError={() => toast.error(`Remote video failed to render for ${getDisplayName(uid)}`)}
+              onLoadedMetadata={(e) => {
+                const el = e.currentTarget;
+                if (el.paused) {
+                  el.play().catch(() => {
+                    toastOnce(`remote:${uid}:loadedmetadata-play`, () =>
+                      toast.info(`Tap video to play for ${getDisplayName(uid)}`)
+                    );
+                  });
+                }
+              }}
+              onStalled={() =>
+                toastOnce(`remote:${uid}:stalled`, () =>
+                  toast.warning(`Video from ${getDisplayName(uid)} stalled. Reconnecting...`)
+                )
+              }
+              onWaiting={() =>
+                toastOnce(`remote:${uid}:waiting`, () =>
+                  toast.info(`Waiting for ${getDisplayName(uid)}'s video...`)
+                )
+              }
+              onEmptied={() =>
+                toastOnce(`remote:${uid}:emptied`, () =>
+                  toast.warning(`Video stream from ${getDisplayName(uid)} was interrupted`)
+                )
+              }
+              onSuspend={() =>
+                toastOnce(`remote:${uid}:suspend`, () =>
+                  toast.info(`Video from ${getDisplayName(uid)} is temporarily suspended`)
+                )
+              }
+              onError={() =>
+                toastOnce(`remote:${uid}:error`, () =>
+                  toast.error(`Remote video failed to render for ${getDisplayName(uid)}`)
+                )
+              }
               muted
               aria-label={`Remote video from ${getDisplayName(uid)}. Tap to toggle audio.`}
             />
@@ -1157,7 +1218,41 @@ export default function VideoRoom() {
               autoPlay
               muted
               playsInline
-              onError={() => toast.error("Local video failed to render")}
+              onLoadedMetadata={(e) => {
+                const el = e.currentTarget;
+                if (el.paused) {
+                  el.play().catch(() => {
+                    toastOnce(`local:loadedmetadata-play`, () =>
+                      toast.info("Tap to start local video playback")
+                    );
+                  });
+                }
+              }}
+              onStalled={() =>
+                toastOnce(`local:stalled`, () =>
+                  toast.warning("Local video stalled. Reacquiring camera…")
+                )
+              }
+              onWaiting={() =>
+                toastOnce(`local:waiting`, () =>
+                  toast.info("Waiting for local camera…")
+                )
+              }
+              onEmptied={() =>
+                toastOnce(`local:emptied`, () =>
+                  toast.warning("Local video stream was interrupted")
+                )
+              }
+              onSuspend={() =>
+                toastOnce(`local:suspend`, () =>
+                  toast.info("Local video is temporarily suspended")
+                )
+              }
+              onError={() =>
+                toastOnce(`local:error`, () =>
+                  toast.error("Local video failed to render")
+                )
+              }
               className="w-full h-full object-cover"
             />
             {needsPermissionPrompt && (
