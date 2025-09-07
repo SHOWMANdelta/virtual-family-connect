@@ -141,95 +141,45 @@ export default function VideoRoom() {
           });
         } catch (e) {
           console.error("Failed to send ICE candidate", e);
+          // One-time toast per peer to avoid spam
+          const key = `${peerUserId}:signal:candidate:sendfail`;
+          if (!connectionAlertsRef.current.has(key)) {
+            connectionAlertsRef.current.add(key);
+            toast.warning(
+              `Network signal issue while sending connection info to ${getDisplayName(
+                peerUserId
+              )}. If this persists, check VPN/firewall and try switching networks.`
+            );
+          }
         }
       }
     };
 
-    // Add: drive negotiation in a controlled way
-    pc.onnegotiationneeded = async () => {
-      if (!roomId || !user?._id) return;
-      // Prevent concurrent offers and only negotiate when stable
-      if (makingOfferRef.current.get(peerUserId)) return;
-      if (pc!.signalingState !== "stable") return;
-      // Ensure tracks are attached
-      attachLocalTracksToPc(pc!);
+    // Surface ICE candidate errors with diagnostics
+    pc.onicecandidateerror = (event: any) => {
       try {
-        makingOfferRef.current.set(peerUserId, true);
-        const offer = await pc!.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true });
-        await pc!.setLocalDescription(offer);
-        await sendSignal({
-          roomId: roomId as any,
-          fromUserId: (user as any)._id,
-          toUserId: peerUserId as any,
-          kind: "offer",
-          payload: {
-            sdp: offer.sdp || "",
-            type: offer.type,
-          },
-        });
-      } catch (e) {
-        console.error("onnegotiationneeded createOffer error", e);
-      } finally {
-        makingOfferRef.current.set(peerUserId, false);
-      }
-    };
-
-    pc.onconnectionstatechange = () => {
-      if (pc && (pc.connectionState === "disconnected" || pc.connectionState === "failed")) {
-        // CLEAR: watchdogs and timers when losing connection
-        const iceTimer = iceGatheringTimersRef.current.get(peerUserId);
-        if (iceTimer) {
-          clearTimeout(iceTimer);
-          iceGatheringTimersRef.current.delete(peerUserId);
-        }
-        const mediaTimer = mediaWatchdogRef.current.get(peerUserId);
-        if (mediaTimer) {
-          clearTimeout(mediaTimer);
-          mediaWatchdogRef.current.delete(peerUserId);
-        }
-
-        const key = `${peerUserId}:${pc.connectionState}`;
+        const code = event?.errorCode;
+        const text = event?.errorText;
+        const url = event?.url;
+        const host = event?.hostCandidate;
+        const srv = event?.url || event?.urlCandidate;
+        const details = [url || srv, host].filter(Boolean).join(" • ");
+        const key = `${peerUserId}:icecandidateerror:${code}:${host || ""}`;
         if (!connectionAlertsRef.current.has(key)) {
           connectionAlertsRef.current.add(key);
           toast.error(
-            pc.connectionState === "failed"
-              ? `Connection failed with ${getDisplayName(peerUserId)}`
-              : `Disconnected from ${getDisplayName(peerUserId)}`
+            `Connection routing error with ${getDisplayName(
+              peerUserId
+            )}${code ? ` (code ${code})` : ""}. ${
+              text ? text + ". " : ""
+            }Try disabling VPN, allowing WebRTC in your firewall, or switching networks.${details ? ` [${details}]` : ""}`
           );
         }
-        pc.close();
-        peerConnectionsRef.current.delete(peerUserId);
-        remoteStreamsRef.current.delete(peerUserId);
-        makingOfferRef.current.delete(peerUserId);
-        pendingCandidatesRef.current.delete(peerUserId);
-        forceRender((n) => n + 1);
-      }
-
-      // When connected, start a watchdog to ensure media flows
-      if (pc && pc.connectionState === "connected") {
-        // Clear old watchdogs if any
-        const existing = mediaWatchdogRef.current.get(peerUserId);
-        if (existing) clearTimeout(existing);
-
-        const timer = window.setTimeout(() => {
-          // Check if we actually have a remote stream with a live video track
-          const stream = remoteStreamsRef.current.get(peerUserId);
-          const hasLiveVideo =
-            !!stream &&
-            stream.getVideoTracks().some((t) => t.readyState === "live" && !t.muted);
-
-          if (!hasLiveVideo) {
-            toast.warning(
-              `Connected to ${getDisplayName(peerUserId)} but no video received yet. This may be a network or permissions issue.`
-            );
-          }
-          mediaWatchdogRef.current.delete(peerUserId);
-        }, 15000);
-        mediaWatchdogRef.current.set(peerUserId, timer);
+      } catch (err) {
+        console.warn("onicecandidateerror handling failed", err);
       }
     };
 
-    // Also surface ICE layer issues
     pc.oniceconnectionstatechange = () => {
       if (pc.iceConnectionState === "failed" || pc.iceConnectionState === "disconnected") {
         const key = `${peerUserId}:ice:${pc.iceConnectionState}`;
@@ -237,8 +187,12 @@ export default function VideoRoom() {
           connectionAlertsRef.current.add(key);
           toast.warning(
             pc.iceConnectionState === "failed"
-              ? `Network issue: ICE failed with ${getDisplayName(peerUserId)}`
-              : `Network unstable: ICE disconnected from ${getDisplayName(peerUserId)}`
+              ? `Couldn't establish a stable path to ${getDisplayName(
+                  peerUserId
+                )}. Tips: disable VPN, check firewall, ensure both sides use HTTPS, or switch networks/Wi‑Fi bands.`
+              : `Connection to ${getDisplayName(
+                  peerUserId
+                )} looks unstable. Check your Wi‑Fi/cellular signal or switch networks.`
           );
         }
       }
