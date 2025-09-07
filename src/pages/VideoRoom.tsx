@@ -27,6 +27,8 @@ import { useNavigate, useParams } from "react-router";
 import { toast } from "sonner";
 import { useState, useEffect, useRef } from "react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
 
 export default function VideoRoom() {
   const { roomId } = useParams();
@@ -40,6 +42,9 @@ export default function VideoRoom() {
   const [message, setMessage] = useState("");
   const [needsPermissionPrompt, setNeedsPermissionPrompt] = useState(false);
   const [permissionDetail, setPermissionDetail] = useState<string>("");
+  const [showInvite, setShowInvite] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviting, setInviting] = useState(false);
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
@@ -80,6 +85,7 @@ export default function VideoRoom() {
   const leaveRoom = useMutation(api.rooms.leaveRoom);
   const sendMessage = useMutation(api.messages.sendMessage);
   const joinRoom = useMutation(api.rooms.joinRoom);
+  const inviteUser = useMutation(api.rooms.inviteUserToRoom);
 
   // WebRTC: peer connections and streams
   const peerConnectionsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
@@ -1047,6 +1053,25 @@ export default function VideoRoom() {
     }
   };
 
+  const handleInvite = async () => {
+    if (!roomId || !inviteEmail.trim()) return;
+    setInviting(true);
+    try {
+      await inviteUser({ roomId: roomId as any, email: inviteEmail.trim() });
+      toast.success("Invitation sent");
+      setInviteEmail("");
+      setShowInvite(false);
+    } catch (e: any) {
+      const msg =
+        typeof e?.message === "string"
+          ? e.message
+          : "Failed to send invitation";
+      toast.error(msg);
+    } finally {
+      setInviting(false);
+    }
+  };
+
   const getInitials = (name?: string, email?: string) => {
     if (name) {
       return name.split(' ').map(n => n[0]).join('').toUpperCase();
@@ -1271,9 +1296,61 @@ export default function VideoRoom() {
             >
               <MessageCircle className="h-4 w-4" />
             </Button>
+            {/* Add Member Button */}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setShowInvite(true)}
+              className="text-gray-300 hover:text-white"
+              aria-label="Add member"
+            >
+              <Users className="h-4 w-4 mr-2" />
+              <span className="hidden sm:inline">Add Member</span>
+              <span className="sm:hidden">Add</span>
+            </Button>
           </div>
         </div>
       </header>
+
+      <Dialog open={showInvite} onOpenChange={setShowInvite}>
+        <DialogContent className="bg-gray-800 text-white border border-gray-700">
+          <DialogHeader>
+            <DialogTitle>Invite a member</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-2">
+              <Label htmlFor="inviteEmail" className="text-gray-300">Email</Label>
+              <Input
+                id="inviteEmail"
+                type="email"
+                placeholder="user@example.com"
+                value={inviteEmail}
+                onChange={(e) => setInviteEmail(e.target.value)}
+                className="bg-gray-700 border-gray-600 text-white placeholder-gray-400"
+              />
+            </div>
+            <p className="text-xs text-gray-400">
+              The user will receive an in-app notification to join this call.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              className="text-gray-300 hover:text-white"
+              onClick={() => setShowInvite(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleInvite}
+              disabled={!inviteEmail.trim() || inviting}
+              className="bg-blue-600 hover:bg-blue-700"
+            >
+              {inviting ? "Inviting..." : "Send Invite"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <div className="flex h-[calc(100vh-80px)]">
         {/* Main Video Area */}

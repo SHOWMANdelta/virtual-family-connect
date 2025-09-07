@@ -228,3 +228,67 @@ export const getRoom = query({
     return await ctx.db.get(args.roomId);
   },
 });
+
+export const inviteUserToRoom = mutation({
+  args: {
+    roomId: v.id("rooms"),
+    email: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const requester = await getCurrentUser(ctx);
+    if (!requester) {
+      throw new Error("AUTH_REQUIRED: Must be authenticated to invite");
+    }
+
+    const room = await ctx.db.get(args.roomId);
+    if (!room) throw new Error("ROOM_NOT_FOUND");
+
+    // Enforce expiry/inactive
+    if (room.endTime && Date.now() > room.endTime) {
+      if (room.isActive) await ctx.db.patch(room._id, { isActive: false });
+      throw new Error("ROOM_EXPIRED: Room has expired");
+    }
+    if (!room.isActive) throw new Error("ROOM_INACTIVE");
+
+    const email = args.email.trim().toLowerCase();
+    if (!email || !email.includes("@")) {
+      throw new Error("INVALID_EMAIL");
+    }
+
+    const recipient = await ctx.db
+      .query("users")
+      .withIndex("email", (q) => q.eq("email", email))
+      .first();
+
+    if (!recipient) {
+      throw new Error("USER_NOT_FOUND");
+    }
+
+    if (recipient._id === requester._id) {
+      throw new Error("CANNOT_INVITE_SELF");
+    }
+
+    // Capacity check (only active participants)
+    const activeParticipants = await ctx.db
+      .query("roomParticipants")
+      .withIndex("by_room", (q) => q.eq("roomId", args.roomId))
+      .filter((q) => q.eq(q.field("leftAt"), undefined))
+      .collect();
+
+    if (activeParticipants.length >= room.maxParticipants) {
+      throw new Error("ROOM_AT_CAPACITY");
+    }
+
+    // Send in-app notification
+    await ctx.db.insert("notifications", {
+      recipientId: recipient._id,
+      senderId: requester._id,
+      type: "call",
+      title: `You're invited to join: ${room.name}`,
+      body: "Tap to join the ongoing call.",
+      roomId: room._id,
+      read: false,
+      createdAt: Date.now(),
+    });
+  },
+});
