@@ -147,6 +147,139 @@ export default function VideoRoom() {
     }
   };
 
+  // Helper to add local tracks to an existing RTCPeerConnection (if not already added)
+  const attachLocalTracksToPc = (pc: RTCPeerConnection) => {
+    if (!localStreamRef.current) return;
+    const senders = pc.getSenders();
+    const haveVideo = senders.some((s) => s.track && s.track.kind === "video");
+    const haveAudio = senders.some((s) => s.track && s.track.kind === "audio");
+
+    localStreamRef.current.getTracks().forEach((track) => {
+      if (track.kind === "video" && !haveVideo) {
+        pc.addTrack(track, localStreamRef.current as MediaStream);
+      }
+      if (track.kind === "audio" && !haveAudio) {
+        pc.addTrack(track, localStreamRef.current as MediaStream);
+      }
+    });
+  };
+
+  // Replace outgoing video track in all peer connections
+  const replaceOutgoingVideoTrack = (newTrack: MediaStreamTrack | null) => {
+    for (const pc of peerConnectionsRef.current.values()) {
+      const sender = pc.getSenders().find((s) => s.track && s.track.kind === "video");
+      if (sender) {
+        sender.replaceTrack(newTrack).catch((e) => console.warn("replaceTrack failed", e));
+      } else if (newTrack && localStreamRef.current) {
+        // If no sender yet (e.g., connection created before tracks), add track
+        pc.addTrack(newTrack, localStreamRef.current);
+      }
+    }
+  };
+
+  // On mount: initialize media and join room
+  useEffect(() => {
+    if (!roomId || !user?._id) return;
+
+    // Join the room for presence so others can connect to you
+    (async () => {
+      try {
+        await joinRoom({ roomId: roomId as any });
+      } catch (e) {
+        console.error("Failed to join room", e);
+      }
+    })();
+
+    // Initialize local media
+    (async () => {
+      await initializeMedia();
+      // Attach local tracks to any already-created peer connections
+      for (const pc of peerConnectionsRef.current.values()) {
+        attachLocalTracksToPc(pc);
+      }
+    })();
+
+    // Cleanup on unmount
+    return () => {
+      try {
+        peerConnectionsRef.current.forEach((pc) => pc.close());
+        peerConnectionsRef.current.clear();
+        remoteStreamsRef.current.clear();
+        if (localStreamRef.current) {
+          localStreamRef.current.getTracks().forEach((t) => t.stop());
+        }
+      } catch {}
+    };
+  }, [roomId, user?._id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Update initializeMedia to also attach tracks to existing PCs
+  const initializeMedia = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: true,
+        audio: true
+      });
+      
+      localStreamRef.current = stream;
+      
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+      }
+
+      // Attach tracks to any existing peer connections
+      for (const pc of peerConnectionsRef.current.values()) {
+        attachLocalTracksToPc(pc);
+      }
+    } catch (error) {
+      console.error("Error accessing media devices:", error);
+      toast.error("Could not access camera or microphone");
+    }
+  };
+
+  // Enhance screen share to replace outgoing tracks to all peers and revert cleanly
+  const toggleScreenShare = async () => {
+    try {
+      if (!isScreenSharing) {
+        const screenStream = await navigator.mediaDevices.getDisplayMedia({
+          video: true,
+          audio: true
+        });
+
+        const screenVideoTrack = screenStream.getVideoTracks()[0] || null;
+
+        if (videoRef.current) {
+          videoRef.current.srcObject = screenStream;
+        }
+
+        // Replace outgoing video to peers
+        replaceOutgoingVideoTrack(screenVideoTrack);
+
+        // When user stops sharing using browser UI, revert to camera
+        if (screenVideoTrack) {
+          screenVideoTrack.onended = async () => {
+            await initializeMedia();
+            const camTrack = localStreamRef.current?.getVideoTracks()[0] || null;
+            replaceOutgoingVideoTrack(camTrack);
+            setIsScreenSharing(false);
+          };
+        }
+
+        setIsScreenSharing(true);
+        toast.success("Screen sharing started");
+      } else {
+        // Revert to camera
+        await initializeMedia();
+        const camTrack = localStreamRef.current?.getVideoTracks()[0] || null;
+        replaceOutgoingVideoTrack(camTrack);
+        setIsScreenSharing(false);
+        toast.success("Screen sharing stopped");
+      }
+    } catch (error) {
+      console.error("Error with screen sharing:", error);
+      toast.error("Could not start screen sharing");
+    }
+  };
+
   // Handle incoming signals
   useEffect(() => {
     if (!signals || !roomId || !user?._id) return;
@@ -266,24 +399,6 @@ export default function VideoRoom() {
     }
   };
 
-  const initializeMedia = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: true,
-        audio: true
-      });
-      
-      localStreamRef.current = stream;
-      
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-      }
-    } catch (error) {
-      console.error("Error accessing media devices:", error);
-      toast.error("Could not access camera or microphone");
-    }
-  };
-
   const toggleVideo = () => {
     if (localStreamRef.current) {
       const videoTrack = localStreamRef.current.getVideoTracks()[0];
@@ -301,32 +416,6 @@ export default function VideoRoom() {
         audioTrack.enabled = !audioTrack.enabled;
         setIsAudioOn(audioTrack.enabled);
       }
-    }
-  };
-
-  const toggleScreenShare = async () => {
-    try {
-      if (!isScreenSharing) {
-        const screenStream = await navigator.mediaDevices.getDisplayMedia({
-          video: true,
-          audio: true
-        });
-        
-        if (videoRef.current) {
-          videoRef.current.srcObject = screenStream;
-        }
-        
-        setIsScreenSharing(true);
-        toast.success("Screen sharing started");
-      } else {
-        // Switch back to camera
-        await initializeMedia();
-        setIsScreenSharing(false);
-        toast.success("Screen sharing stopped");
-      }
-    } catch (error) {
-      console.error("Error with screen sharing:", error);
-      toast.error("Could not start screen sharing");
     }
   };
 

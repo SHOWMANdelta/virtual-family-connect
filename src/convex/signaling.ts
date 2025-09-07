@@ -18,16 +18,41 @@ export const sendSignal = mutation({
   },
   handler: async (ctx, args) => {
     const user = await getCurrentUser(ctx);
-    if (!user) throw new Error("Must be authenticated");
-    if (user._id !== args.fromUserId) throw new Error("Not authorized to send as another user");
-    return await ctx.db.insert("signals", {
-      roomId: args.roomId,
-      fromUserId: args.fromUserId,
-      toUserId: args.toUserId,
-      kind: args.kind,
-      payload: args.payload,
-      createdAt: Date.now(),
-    });
+    if (!user) throw new Error("AUTH_REQUIRED: Must be authenticated");
+    if (user._id !== args.fromUserId) throw new Error("NOT_ALLOWED: Cannot send on behalf of another user");
+
+    // Verify both sender and recipient are participants of the room
+    const [fromParticipant, toParticipant] = await Promise.all([
+      ctx.db
+        .query("roomParticipants")
+        .withIndex("by_room_and_user", (q) => q.eq("roomId", args.roomId).eq("userId", args.fromUserId))
+        .first(),
+      ctx.db
+        .query("roomParticipants")
+        .withIndex("by_room_and_user", (q) => q.eq("roomId", args.roomId).eq("userId", args.toUserId))
+        .first(),
+    ]);
+
+    if (!fromParticipant) {
+      throw new Error("NOT_IN_ROOM: Sender is not a participant in the room");
+    }
+    if (!toParticipant) {
+      throw new Error("RECIPIENT_NOT_IN_ROOM: Recipient is not a participant in the room");
+    }
+
+    try {
+      return await ctx.db.insert("signals", {
+        roomId: args.roomId,
+        fromUserId: args.fromUserId,
+        toUserId: args.toUserId,
+        kind: args.kind,
+        payload: args.payload,
+        createdAt: Date.now(),
+      });
+    } catch (err) {
+      console.error("SIGNAL_SEND_FAILED", { err, args: { ...args, payload: "omitted" } });
+      throw new Error("SIGNAL_SEND_FAILED: Unable to enqueue signal");
+    }
   },
 });
 
@@ -37,12 +62,29 @@ export const getSignals = query({
     forUserId: v.id("users"),
   },
   handler: async (ctx, args) => {
-    // Return signals for this user in this room
-    const rows = await ctx.db
-      .query("signals")
-      .withIndex("by_room_and_to", (q) => q.eq("roomId", args.roomId).eq("toUserId", args.forUserId))
-      .collect();
-    return rows;
+    const user = await getCurrentUser(ctx);
+    if (!user) throw new Error("AUTH_REQUIRED: Must be authenticated");
+    if (user._id !== args.forUserId) throw new Error("NOT_ALLOWED: Cannot read signals for another user");
+
+    // Ensure the requesting user is a participant in the room
+    const participant = await ctx.db
+      .query("roomParticipants")
+      .withIndex("by_room_and_user", (q) => q.eq("roomId", args.roomId).eq("userId", args.forUserId))
+      .first();
+    if (!participant) {
+      throw new Error("NOT_IN_ROOM: You are not a participant in this room");
+    }
+
+    try {
+      const rows = await ctx.db
+        .query("signals")
+        .withIndex("by_room_and_to", (q) => q.eq("roomId", args.roomId).eq("toUserId", args.forUserId))
+        .collect();
+      return rows;
+    } catch (err) {
+      console.error("SIGNAL_FETCH_FAILED", { err, args });
+      throw new Error("SIGNAL_FETCH_FAILED: Unable to fetch signals");
+    }
   },
 });
 
@@ -52,14 +94,22 @@ export const acknowledgeSignals = mutation({
   },
   handler: async (ctx, args) => {
     const user = await getCurrentUser(ctx);
-    if (!user) throw new Error("Must be authenticated");
-    // Best-effort delete; ignore not found
-    for (const id of args.signalIds) {
-      const s = await ctx.db.get(id);
-      if (s && s.toUserId === user._id) {
+    if (!user) throw new Error("AUTH_REQUIRED: Must be authenticated");
+
+    try {
+      for (const id of args.signalIds) {
+        const s = await ctx.db.get(id);
+        if (!s) continue;
+        if (s.toUserId !== user._id) {
+          // Skip silently to avoid leaking existence; could log
+          continue;
+        }
         await ctx.db.delete(id);
       }
+      return true;
+    } catch (err) {
+      console.error("SIGNAL_ACK_FAILED", { err, argsCount: args.signalIds.length });
+      throw new Error("SIGNAL_ACK_FAILED: Unable to acknowledge signals");
     }
-    return true;
   },
 });
