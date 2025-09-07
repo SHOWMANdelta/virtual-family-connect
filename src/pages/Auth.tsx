@@ -30,6 +30,12 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
   const [otp, setOtp] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [email, setEmail] = useState("");
+  const [emailError, setEmailError] = useState<string | null>(null);
+
+  const validateEmail = (value: string) => {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
+  };
 
   useEffect(() => {
     if (!authLoading && isAuthenticated) {
@@ -37,10 +43,17 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
       navigate(redirect);
     }
   }, [authLoading, isAuthenticated, navigate, redirectAfterAuth]);
+
   const handleEmailSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setIsLoading(true);
     setError(null);
+    if (!validateEmail(email)) {
+      setEmailError("Please enter a valid email address.");
+      setIsLoading(false);
+      return;
+    }
+    setEmailError(null);
     try {
       const formData = new FormData(event.currentTarget);
       await signIn("email-otp", formData);
@@ -61,6 +74,11 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
     event.preventDefault();
     setIsLoading(true);
     setError(null);
+    if (!/^\d{6}$/.test(otp)) {
+      setError("Please enter the 6-digit verification code.");
+      setIsLoading(false);
+      return;
+    }
     try {
       const formData = new FormData(event.currentTarget);
       await signIn("email-otp", formData);
@@ -103,7 +121,7 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
       {/* Auth Content */}
       <div className="flex-1 flex items-center justify-center">
         <div className="flex items-center justify-center h-full flex-col">
-        <Card className="min-w-[350px] pb-0 border shadow-md">
+        <Card className="min-w[350px] pb-0 border shadow-md">
           {step === "signIn" ? (
             <>
               <CardHeader className="text-center">
@@ -124,10 +142,8 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
               </CardHeader>
               <form onSubmit={handleEmailSubmit}>
                 <CardContent>
-                  
                   <div className="relative flex items-center gap-2">
                     <div className="relative flex-1">
-                      <Mail className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
                       <Input
                         name="email"
                         placeholder="name@example.com"
@@ -135,13 +151,21 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
                         className="pl-9"
                         disabled={isLoading}
                         required
+                        value={email}
+                        onChange={(e) => {
+                          setEmail(e.target.value);
+                          if (emailError) setEmailError(null);
+                        }}
+                        inputMode="email"
+                        autoComplete="email"
+                        aria-invalid={!!emailError}
                       />
                     </div>
                     <Button
                       type="submit"
                       variant="outline"
                       size="icon"
-                      disabled={isLoading}
+                      disabled={isLoading || !email || !validateEmail(email)}
                     >
                       {isLoading ? (
                         <Loader2 className="h-4 w-4 animate-spin" />
@@ -150,10 +174,12 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
                       )}
                     </Button>
                   </div>
-                  {error && (
+                  {emailError && (
+                    <p className="mt-2 text-sm text-red-500">{emailError}</p>
+                  )}
+                  {error && !emailError && (
                     <p className="mt-2 text-sm text-red-500">{error}</p>
                   )}
-                  
                   <div className="mt-4">
                     <div className="relative">
                       <div className="absolute inset-0 flex items-center">
@@ -196,12 +222,11 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
                   <div className="flex justify-center">
                     <InputOTP
                       value={otp}
-                      onChange={setOtp}
+                      onChange={(val) => setOtp(val.replace(/\D/g, "").slice(0, 6))}
                       maxLength={6}
                       disabled={isLoading}
                       onKeyDown={(e) => {
                         if (e.key === "Enter" && otp.length === 6 && !isLoading) {
-                          // Find the closest form and submit it
                           const form = (e.target as HTMLElement).closest("form");
                           if (form) {
                             form.requestSubmit();
@@ -236,7 +261,7 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
                   <Button
                     type="submit"
                     className="w-full"
-                    disabled={isLoading || otp.length !== 6}
+                    disabled={isLoading || otp.length !== 6 || !/^\d{6}$/.test(otp)}
                   >
                     {isLoading ? (
                       <>
