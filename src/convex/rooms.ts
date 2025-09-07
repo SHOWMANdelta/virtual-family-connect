@@ -30,6 +30,12 @@ export const createRoom = mutation({
       throw new Error("INVALID_SCHEDULE: scheduledTime must be a valid timestamp");
     }
 
+    // Add: compute endTime to enforce 30-minute expiry
+    const THIRTY_MIN_MS = 30 * 60 * 1000;
+    const now = Date.now();
+    const startTime = args.scheduledTime && args.scheduledTime > now ? args.scheduledTime : now;
+    const endTime = startTime + THIRTY_MIN_MS;
+
     const roomId = await ctx.db.insert("rooms", {
       name,
       description: args.description,
@@ -38,6 +44,8 @@ export const createRoom = mutation({
       maxParticipants,
       roomType: args.roomType,
       scheduledTime: args.scheduledTime,
+      // Add: endTime for auto-expiry
+      endTime,
     });
 
     await ctx.db.insert("roomParticipants", {
@@ -70,6 +78,15 @@ export const joinRoom = mutation({
     if (!room) {
       throw new Error("ROOM_NOT_FOUND: Room does not exist");
     }
+
+    // Add: Expiry enforcement before any other checks
+    if (room.endTime && Date.now() > room.endTime) {
+      if (room.isActive) {
+        await ctx.db.patch(room._id, { isActive: false });
+      }
+      throw new Error("ROOM_EXPIRED: Room has expired");
+    }
+
     if (!room.isActive) {
       throw new Error("ROOM_INACTIVE: Cannot join an inactive room");
     }
@@ -192,7 +209,14 @@ export const getUserRooms = query({
       (r): r is Doc<"rooms"> => r !== null
     );
 
-    return nonNullRooms;
+    // Add: filter out expired or inactive rooms
+    const now = Date.now();
+    const activeAndUnexpired = nonNullRooms.filter((r) => {
+      const notExpired = !r.endTime || now <= r.endTime;
+      return r.isActive && notExpired;
+    });
+
+    return activeAndUnexpired;
   },
 });
 
