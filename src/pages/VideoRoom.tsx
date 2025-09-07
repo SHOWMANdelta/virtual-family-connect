@@ -38,6 +38,8 @@ export default function VideoRoom() {
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [showChat, setShowChat] = useState(false);
   const [message, setMessage] = useState("");
+  const [needsPermissionPrompt, setNeedsPermissionPrompt] = useState(false);
+  const [permissionDetail, setPermissionDetail] = useState<string>("");
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
@@ -305,6 +307,65 @@ export default function VideoRoom() {
     };
   }, [roomId, user?._id]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Add: detect camera/mic permissions reactively (where supported)
+  useEffect(() => {
+    let cleanupFns: Array<() => void> = [];
+    const check = async () => {
+      try {
+        // Some browsers support these permission names
+        const perms = navigator.permissions as any;
+        if (!perms?.query) return;
+
+        const queries = [
+          perms.query({ name: "camera" as PermissionName }).catch(() => null),
+          perms.query({ name: "microphone" as PermissionName }).catch(() => null),
+        ];
+        const [cam, mic] = await Promise.all(queries);
+
+        const states = [cam?.state, mic?.state].filter(Boolean) as Array<PermissionState>;
+        if (states.length) {
+          const showPrompt = states.some((s) => s === "denied" || s === "prompt");
+          setNeedsPermissionPrompt(showPrompt);
+          setPermissionDetail(
+            showPrompt
+              ? "Camera and microphone access is required. Click below to enable. If already granted, use the browser's address bar lock icon to allow."
+              : ""
+          );
+
+          // Track changes
+          [cam, mic].forEach((status) => {
+            if (status) {
+              const handler = () => {
+                const s = status.state;
+                const show = s === "denied" || s === "prompt";
+                setNeedsPermissionPrompt(show);
+              };
+              status.addEventListener("change", handler);
+              cleanupFns.push(() => status.removeEventListener("change", handler));
+            }
+          });
+        }
+      } catch {
+        // Silently ignore if not supported
+      }
+    };
+
+    check();
+
+    // Also re-check when tab becomes visible (user may change permissions)
+    const visHandler = () => {
+      if (document.visibilityState === "visible") {
+        check();
+      }
+    };
+    document.addEventListener("visibilitychange", visHandler);
+    cleanupFns.push(() => document.removeEventListener("visibilitychange", visHandler));
+
+    return () => {
+      cleanupFns.forEach((fn) => fn());
+    };
+  }, []);
+
   // Update initializeMedia to also attach tracks to existing PCs
   const initializeMedia = async () => {
     const tryGet = async (constraints: MediaStreamConstraints) => {
@@ -326,6 +387,10 @@ export default function VideoRoom() {
           channelCount: { ideal: 1 } as any,
         } as any,
       });
+
+      // Success: hide prompt if visible
+      setNeedsPermissionPrompt(false);
+      setPermissionDetail("");
 
       localStreamRef.current = stream;
 
@@ -375,6 +440,14 @@ export default function VideoRoom() {
         attachLocalTracksToPc(pc);
       }
     } catch (error: any) {
+      // If permission denied, show prompt and guidance
+      if (error && typeof error.name === "string" && error.name === "NotAllowedError") {
+        setNeedsPermissionPrompt(true);
+        setPermissionDetail(
+          "Permission was blocked. Click 'Enable Camera & Mic'. If it doesn't prompt, click the lock icon in your browser's address bar and allow camera & microphone."
+        );
+      }
+
       // Try fallbacks: video-only, then audio-only
       console.warn("Primary getUserMedia failed, trying fallbacks", error);
       try {
@@ -911,7 +984,36 @@ export default function VideoRoom() {
               onError={() => toast.error("Local video failed to render")}
               className="w-full h-full object-cover"
             />
-            
+            {needsPermissionPrompt && (
+              <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/70 backdrop-blur-sm px-4">
+                <div className="max-w-md w-full bg-gray-800/90 border border-white/10 rounded-2xl p-6 shadow-2xl">
+                  <div className="space-y-3">
+                    <h3 className="text-lg font-semibold">Enable Camera & Microphone</h3>
+                    <p className="text-sm text-gray-300">
+                      {permissionDetail || "We need access to your camera and microphone to start the call."}
+                    </p>
+                    <ul className="text-xs text-gray-400 list-disc pl-5 space-y-1">
+                      <li>Click the button below to re-request access.</li>
+                      <li>If blocked, click the lock icon in the address bar and allow Camera and Microphone.</li>
+                      <li>Ensure you're using HTTPS and no other app is using your devices.</li>
+                    </ul>
+                    <div className="pt-2">
+                      <Button
+                        className="w-full bg-blue-600 hover:bg-blue-700"
+                        onClick={() => {
+                          // Force re-prompt by attempting to acquire both tracks under user gesture
+                          initializeMedia().catch(() => {
+                            // Swallow here; initializeMedia handles toasts and state
+                          });
+                        }}
+                      >
+                        Enable Camera & Mic
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
             {!isVideoOn && (
               <div className="absolute inset-0 bg-gray-700 flex items-center justify-center">
                 <div className="text-center">
