@@ -1,257 +1,197 @@
-## Overview
+# HealthConnect — Real-time Family & Care Video Rooms
 
-This project uses the following tech stack:
-- Vite
-- Typescript
-- React Router v7 (all imports from `react-router` instead of `react-router-dom`)
-- React 19 (for frontend components)
-- Tailwind v4 (for styling)
-- Shadcn UI (for UI components library)
-- Lucide Icons (for icons)
-- Convex (for backend & database)
-- Convex Auth (for authentication)
-- Framer Motion (for animations)
-- Three js (for 3d models)
+A real-time video conferencing and live monitoring web app to connect patients with relatives and healthcare providers. Built with a Material Design 3 visual system, reactive data (Convex), and OTP-based auth.
 
-All relevant files live in the 'src' directory.
+Demo-ready overview:
+- Create and join video rooms
+- Invite family with shareable links
+- In-room chat
+- Patient–Relative connections
+- Appointments scheduling and instant room creation
+- Clean, responsive MD3 UI with shadows, ripples, and Roboto
 
-Use pnpm for the package manager.
+---
 
-## Setup
+## 1) Quickstart (Local Setup)
 
-This project is set up already and running on a cloud environment, as well as a convex development in the sandbox.
+Prerequisites:
+- Node.js ≥ 18
+- pnpm ≥ 8
+- A Convex project (auto-provisioned on `npx convex dev`)
+- Modern browser (with camera/mic permissions enabled)
 
-## Environment Variables
+Install:
+- pnpm install
 
-The project is set up with project specific CONVEX_DEPLOYMENT and VITE_CONVEX_URL environment variables on the client side.
+Run (two terminals recommended):
+- Terminal A: npx convex dev
+- Terminal B: pnpm dev
+  - App runs on Vite's dev server (default: http://localhost:5173)
 
-The convex server has a separate set of environment variables that are accessible by the convex backend.
+If you see compile errors:
+- The dev server is always running. Fix code issues until "Convex functions ready!" and no TypeScript errors remain.
 
-Currently, these variables include auth-specific keys: JWKS, JWT_PRIVATE_KEY, and SITE_URL.
+Notes:
+- Authentication uses Email OTP and Guest login. No environment variables required for basic usage.
+- If clipboard permissions are blocked, share-link copying falls back automatically.
 
+---
 
-# Using Authentication (Important!)
+## 2) Tech Stack
 
-You must follow these conventions when using authentication.
+- Frontend: React + Vite + Tailwind + shadcn/ui, Framer Motion (animations)
+- Backend: Convex (database + server functions), Convex Auth (email OTP and anonymous)
+- Styling: Material Design 3 palette, elevation shadows, 8dp grid, ripple, Roboto
+- Realtime: Convex queries (auto-updating subscriptions)
 
-## Auth is already set up.
+---
 
-All convex authentication functions are already set up. The auth currently uses email OTP and anonymous users, but can support more.
+## 3) App Structure (Key Screens)
 
-The email OTP configuration is defined in `src/convex/auth/emailOtp.ts`. DO NOT MODIFY THIS FILE.
+- Landing (/) — simple entry with CTA
+- Auth (/auth) — Email OTP and Guest login
+- Dashboard (/dashboard)
+  - Quick Actions: Create Room, Connect Family, Schedule Visit
+  - Tabs: Overview, Rooms, Connections, Appointments, Monitoring
+- Video Room (/room/:roomId)
+  - Camera/mic controls, screen share, participants, in-room chat
+  - "Connect Family" share link button (responsive)
 
-Also, DO NOT MODIFY THESE AUTH FILES: `src/convex/auth.config.ts` and `src/convex/auth.ts`.
+---
 
-## Using Convex Auth on the backend
+## 4) How to Demo (Judge-Friendly Script — ~5 minutes)
 
-On the `src/convex/users.ts` file, you can use the `getCurrentUser` function to get the current user's data.
+1) Sign In
+- Navigate to /auth
+- Option 1: Enter your email → submit → enter 6-digit OTP
+- Option 2: "Continue as Guest" (quickest for demo)
 
-## Using Convex Auth on the frontend
+2) Create a Room
+- Go to Dashboard → Start Video Call → Create Room
+- Provide name, type, optional description, and max participants
+- After creation, you're routed to /room/:roomId
 
-The `/auth` page is already set up to use auth. Navigate to `/auth` for all log in / sign up sequences.
+3) Invite Family
+- In the Video Room header, click "Connect Family" or the user icon on smaller screens
+- A shareable link is copied to the clipboard
+- Open link in another browser or incognito window → they auto-join
 
-You MUST use this hook to get user data. Never do this yourself without the hook:
-```typescript
-import { useAuth } from "@/hooks/use-auth";
+4) In-Room Experience
+- Toggle mic/camera, try screen share
+- Send a chat message; messages appear in realtime
 
-const { isLoading, isAuthenticated, user, signIn, signOut } = useAuth();
-```
+5) Connections (Patient–Relative)
+- Back in Dashboard → Connections tab
+- Use "Connect Family" (button in Quick Actions) to request connection by email
+- As the patient, approve pending requests from Overview → Pending Connection Requests
 
-## Protected Routes
+6) Appointments
+- Dashboard → Appointments tab (or Quick Action "Schedule Visit" if implemented)
+- Start an appointment; it creates a room and navigates you there
+- Rejoin from the Appointments tab while "in_progress"
 
-When protecting a page, use the auth hooks to check for authentication and redirect to /auth.
+7) Monitoring (Showcase)
+- Dashboard → Monitoring tab: Displays vitals UI blocks (demo visuals)
 
-## Auth Page
+Tips for smooth demo:
+- Allow camera/mic permissions
+- Use two separate browsers/users for share link demo
+- Resize the window to show responsive header + compact invite button
 
-The auth page is defined in `src/pages/Auth.tsx`. Redirect authenticated pages and sign in / sign up to /auth.
+---
 
-## Authorization
+## 5) User Manual (Patients & Relatives)
 
-You can perform authorization checks on the frontend and backend.
+Sign In:
+- Use your email (check inbox for OTP) or "Continue as Guest"
 
-On the frontend, you can use the `useAuth` hook to get the current user's data and authentication state.
+Create a Room:
+- Dashboard → Start Video Call → Create Room
+- You'll be taken to the Video Room automatically
 
-You should also be protecting queries, mutations, and actions at the base level, checking for authorization securely.
+Invite Family:
+- In the room header, "Connect Family" → copies an invite link
+- Share with trusted users; they join upon visiting the link
 
-## Adding a redirect after auth
+Controls in Room:
+- Mic, camera, screen share, leave call
+- Chat panel toggle to send/receive messages
 
-In `src/main.tsx`, you must add a redirect after auth URL to redirect to the correct dashboard/profile/page that should be created after authentication.
+Connections:
+- Dashboard → Connect Family → submit patient email + relationship
+- Pending requests show in Overview for patients to approve
 
-# Frontend Conventions
+Appointments:
+- Schedule visits (patient/provider/relatives)
+- Start an appointment; a room is created automatically
 
-You will be using the Vite frontend with React 19, Tailwind v4, and Shadcn UI.
+Security Notes:
+- Never share a room link publicly
+- Only approve trusted connection requests
 
-Generally, pages should be in the `src/pages` folder, and components should be in the `src/components` folder.
+---
 
-Shadcn primitives are located in the `src/components/ui` folder and should be used by default.
+## 6) Admin / Healthcare Provider Manual
 
-## Page routing
+Roles:
+- Users may have role "healthcare_provider" (set through seed/admin ops in DB)
+- Providers can create rooms, schedule appointments, and join patient sessions
 
-Your page component should go under the `src/pages` folder.
+Workflows:
+- Create/join rooms with patients and relatives
+- Approve and manage patient connections (as patient)
+- Schedule Appointments: Specify title, time, duration, type; start when needed
+- Monitoring: Review vitals (demo visuals); real-time monitoring sessions may be expanded
 
-When adding a page, update the react router configuration in `src/main.tsx` to include the new route you just added.
+Operational Guidance:
+- Use Appointments tab to manage session flow
+- Prefer scheduled rooms for structured sessions
+- Follow organizational privacy policies for sharing and recording
 
-## Shad CN conventions
+---
 
-Follow these conventions when using Shad CN components, which you should use by default.
-- Remember to use "cursor-pointer" to make the element clickable
-- For title text, use the "tracking-tight font-bold" class to make the text more readable
-- Always make apps MOBILE RESPONSIVE. This is important
-- AVOID NESTED CARDS. Try and not to nest cards, borders, components, etc. Nested cards add clutter and make the app look messy.
-- AVOID SHADOWS. Avoid adding any shadows to components. stick with a thin border without the shadow.
-- Avoid skeletons; instead, use the loader2 component to show a spinning loading state when loading data.
+## 7) Troubleshooting
 
+- Camera/Mic access denied
+  - Grant permissions in browser; refresh the page
+- Share link not copying
+  - Clipboard API may be blocked → fallback used, else copy manually from address bar
+- "Room not found" or blocked
+  - Ensure the room is active; navigate from Dashboard → Active Rooms
+- OTP not received
+  - Check spam; retry; or use Guest login for demos
+- "Did you forget to run npx convex dev?"
+  - This means there are compile errors. Fix errors and re-run the command until ready.
 
-## Landing Pages
+---
 
-You must always create good-looking designer-level styles to your application. 
-- Make it well animated and fit a certain "theme", ie neo brutalist, retro, neumorphism, glass morphism, etc
+## 8) Security & Privacy
 
-Use known images and emojis from online.
+- Room links are sensitive; share only with trusted people
+- OTP verifies email ownership; guest login for demo only
+- No media stored by default; chat messages stored as text in Convex
+- Follow HIPAA/PII rules when deploying beyond a demo
 
-If the user is logged in already, show the get started button to say "Dashboard" or "Profile" instead to take them there.
+---
 
-## Responsiveness and formatting
+## 9) Future Enhancements (Optional for Hackathon)
 
-Make sure pages are wrapped in a container to prevent the width stretching out on wide screens. Always make sure they are centered aligned and not off-center.
+- Role-based room permissions (mute others, remove participant, host control)
+- Recording and file attachments (Convex storage)
+- Email/SMS notifications (Resend/Twilio)
+- More robust monitoring (data ingestion, alerts, charts)
+- Fine-grained access control to rooms via invitations/whitelists
 
-Always make sure that your designs are mobile responsive. Verify the formatting to ensure it has correct max and min widths as well as mobile responsiveness.
+---
 
-- Always create sidebars for protected dashboard pages and navigate between pages
-- Always create navbars for landing pages
-- On these bars, the created logo should be clickable and redirect to the index page
+## 10) Judge Checklist
 
-## Animating with Framer Motion
-
-You must add animations to components using Framer Motion. It is already installed and configured in the project.
-
-To use it, import the `motion` component from `framer-motion` and use it to wrap the component you want to animate.
-
-
-### Other Items to animate
-- Fade in and Fade Out
-- Slide in and Slide Out animations
-- Rendering animations
-- Button clicks and UI elements
-
-Animate for all components, including on landing page and app pages.
-
-## Three JS Graphics
-
-Your app comes with three js by default. You can use it to create 3D graphics for landing pages, games, etc.
-
-
-## Colors
-
-You can override colors in: `src/index.css`
-
-This uses the oklch color format for tailwind v4.
-
-Always use these color variable names.
-
-Make sure all ui components are set up to be mobile responsive and compatible with both light and dark mode.
-
-Set theme using `dark` or `light` variables at the parent className.
-
-## Styling and Theming
-
-When changing the theme, always change the underlying theme of the shad cn components app-wide under `src/components/ui` and the colors in the index.css file.
-
-Avoid hardcoding in colors unless necessary for a use case, and properly implement themes through the underlying shad cn ui components.
-
-When styling, ensure buttons and clickable items have pointer-click on them (don't by default).
-
-Always follow a set theme style and ensure it is tuned to the user's liking.
-
-## Toasts
-
-You should always use toasts to display results to the user, such as confirmations, results, errors, etc.
-
-Use the shad cn Sonner component as the toaster. For example:
-
-```
-import { toast } from "sonner"
-
-import { Button } from "@/components/ui/button"
-export function SonnerDemo() {
-  return (
-    <Button
-      variant="outline"
-      onClick={() =>
-        toast("Event has been created", {
-          description: "Sunday, December 03, 2023 at 9:00 AM",
-          action: {
-            label: "Undo",
-            onClick: () => console.log("Undo"),
-          },
-        })
-      }
-    >
-      Show Toast
-    </Button>
-  )
-}
-```
-
-Remember to import { toast } from "sonner". Usage: `toast("Event has been created.")`
-
-## Dialogs
-
-Always ensure your larger dialogs have a scroll in its content to ensure that its content fits the screen size. Make sure that the content is not cut off from the screen.
-
-Ideally, instead of using a new page, use a Dialog instead. 
-
-# Using the Convex backend
-
-You will be implementing the convex backend. Follow your knowledge of convex and the documentation to implement the backend.
-
-## The Convex Schema
-
-You must correctly follow the convex schema implementation.
-
-The schema is defined in `src/convex/schema.ts`.
-
-Do not include the `_id` and `_creationTime` fields in your queries (it is included by default for each table).
-Do not index `_creationTime` as it is indexed for you. Never have duplicate indexes.
-
-
-## Convex Actions: Using CRUD operations
-
-When running anything that involves external connections, you must use a convex action with "use node" at the top of the file.
-
-You cannot have queries or mutations in the same file as a "use node" action file. Thus, you must use pre-built queries and mutations in other files.
-
-You can also use the pre-installed internal crud functions for the database:
-
-```ts
-// in convex/users.ts
-import { crud } from "convex-helpers/server/crud";
-import schema from "./schema.ts";
-
-export const { create, read, update, destroy } = crud(schema, "users");
-
-// in some file, in an action:
-const user = await ctx.runQuery(internal.users.read, { id: userId });
-
-await ctx.runMutation(internal.users.update, {
-  id: userId,
-  patch: {
-    status: "inactive",
-  },
-});
-```
-
-
-## Common Convex Mistakes To Avoid
-
-When using convex, make sure:
-- Document IDs are referenced as `_id` field, not `id`.
-- Document ID types are referenced as `Id<"TableName">`, not `string`.
-- Document object types are referenced as `Doc<"TableName">`.
-- Keep schemaValidation to false in the schema file.
-- You must correctly type your code so that it passes the type checker.
-- You must handle null / undefined cases of your convex queries for both frontend and backend, or else it will throw an error that your data could be null or undefined.
-- Always use the `@/folder` path, with `@/convex/folder/file.ts` syntax for importing convex files.
-- This includes importing generated files like `@/convex/_generated/server`, `@/convex/_generated/api`
-- Remember to import functions like useQuery, useMutation, useAction, etc. from `convex/react`
-- NEVER have return type validators.
+- [ ] Auth (Email OTP or Guest)
+- [ ] Create Room → Auto navigation to room
+- [ ] Invite via share link → second user auto-joins
+- [ ] Toggle mic/camera/screen share
+- [ ] In-room chat working
+- [ ] Patient–Relative connection request + approval
+- [ ] Appointment creation and start → room created and joinable
+- [ ] Responsive header + invite button
+- [ ] Monitoring visuals display
