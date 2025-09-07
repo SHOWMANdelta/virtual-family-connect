@@ -21,7 +21,8 @@ import {
   Share,
   MoreVertical,
   ArrowLeft,
-  Send
+  Send,
+  RefreshCcw
 } from "lucide-react";
 import { useNavigate, useParams } from "react-router";
 import { toast } from "sonner";
@@ -54,6 +55,9 @@ export default function VideoRoom() {
 
   // Track which peers we've already alerted for connection issues
   const connectionAlertsRef = useRef<Set<string>>(new Set());
+
+  // Add: local video error counter
+  const localVideoErrorCountRef = useRef<number>(0);
 
   // Helper: emit a one-time toast using a unique key
   const toastOnce = (key: string, fn: () => void) => {
@@ -437,6 +441,31 @@ export default function VideoRoom() {
     }
   };
 
+  // Add: targeted recovery helpers
+  const recoverLocalMediaAndRenegotiate = async (targetPeerId?: string) => {
+    try {
+      // Re-acquire local media (handles permissions and fallbacks)
+      await initializeMedia();
+    } catch (e) {
+      console.warn("Recovery: initializeMedia failed", e);
+    }
+
+    // Renegotiate either a single peer or all current peers
+    try {
+      if (targetPeerId) {
+        await createOfferTo(targetPeerId);
+      } else {
+        for (const peerId of peerConnectionsRef.current.keys()) {
+          await createOfferTo(peerId);
+        }
+      }
+      toast.success("Connection recovery attempted");
+    } catch (e) {
+      console.warn("Recovery: renegotiation failed", e);
+      toast.error("Recovery failed. Try again or reload the page.");
+    }
+  };
+
   // On mount: initialize media and join room
   useEffect(() => {
     if (!roomId || !user?._id) return;
@@ -613,7 +642,7 @@ export default function VideoRoom() {
         }
       }
 
-      // Notify if tracks end (e.g., device unplugged, permission revoked)
+      // Notify if tracks end (e.g., device unplugged,, permission revoked)
       stream.getTracks().forEach((t) => {
         t.onended = () => {
           toast.warning(`${t.kind === "video" ? "Camera" : "Microphone"} stopped`);
@@ -1208,11 +1237,13 @@ export default function VideoRoom() {
                     toast.info(`Video from ${getDisplayName(uid)} is temporarily suspended`)
                   )
                 }
-                onError={() =>
+                onError={() => {
                   toastOnce(`remote:${uid}:error`, () =>
                     toast.error(`Remote video failed to render for ${getDisplayName(uid)}`)
-                  )
-                }
+                  );
+                  // Add: targeted renegotiation for this peer on error
+                  recoverLocalMediaAndRenegotiate(uid).catch(() => {});
+                }}
                 muted
                 aria-label={`Remote video from ${getDisplayName(uid)}. Tap to toggle audio.`}
               />
@@ -1406,11 +1437,18 @@ export default function VideoRoom() {
                   toast.info("Local video is temporarily suspended")
                 )
               }
-              onError={() =>
+              onError={() => {
                 toastOnce(`local:error`, () =>
                   toast.error("Local video failed to render")
-                )
-              }
+                );
+                // Add: incremental local recovery after repeated errors
+                localVideoErrorCountRef.current += 1;
+                if (localVideoErrorCountRef.current >= 2) {
+                  recoverLocalMediaAndRenegotiate().finally(() => {
+                    localVideoErrorCountRef.current = 0;
+                  });
+                }
+              }}
               className="w-full h-full object-cover"
             />
             {needsPermissionPrompt && (
@@ -1514,6 +1552,17 @@ export default function VideoRoom() {
                   className="rounded-full p-3 bg-gray-700 hover:bg-gray-600"
                 >
                   <Settings className="h-5 w-5" />
+                </Button>
+
+                {/* Add: Retry connection button */}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => recoverLocalMediaAndRenegotiate()}
+                  className="rounded-full p-3 bg-gray-700 hover:bg-gray-600"
+                  aria-label="Retry connection"
+                >
+                  <RefreshCcw className="h-5 w-5" />
                 </Button>
 
                 <Button
