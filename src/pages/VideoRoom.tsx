@@ -50,31 +50,221 @@ export default function VideoRoom() {
   const sendMessage = useMutation(api.messages.sendMessage);
   const joinRoom = useMutation(api.rooms.joinRoom);
 
-  useEffect(() => {
-    if (!roomId) {
-      navigate("/dashboard");
-      return;
+  // WebRTC: peer connections and streams
+  const peerConnectionsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
+  const remoteStreamsRef = useRef<Map<string, MediaStream>>(new Map());
+  const [, forceRender] = useState(0); // trigger re-render when remote streams change
+
+  const acknowledgeSignals = useMutation(api.signaling.acknowledgeSignals);
+  const sendSignal = useMutation(api.signaling.sendSignal);
+
+  // Subscribe to signaling for this user in this room
+  const signals = useQuery(
+    api.signaling.getSignals,
+    roomId && user?._id ? { roomId: roomId as any, forUserId: (user as any)._id } : "skip"
+  );
+
+  const rtcConfig: RTCConfiguration = {
+    iceServers: [
+      { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] },
+    ],
+  };
+
+  const ensurePeerConnection = (peerUserId: string) => {
+    let pc = peerConnectionsRef.current.get(peerUserId);
+    if (pc) return pc;
+
+    pc = new RTCPeerConnection(rtcConfig);
+
+    // Add local tracks
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach((track) => {
+        pc!.addTrack(track, localStreamRef.current as MediaStream);
+      });
     }
 
-    // Initialize media stream
-    initializeMedia();
+    // When remote track arrives
+    pc.ontrack = (event) => {
+      const [stream] = event.streams;
+      if (!stream) return;
+      remoteStreamsRef.current.set(peerUserId, stream);
+      forceRender((n) => n + 1);
+    };
 
-    // Auto-join the room when landing via share link
-    (async () => {
-      try {
-        await joinRoom({ roomId: roomId as any });
-      } catch (err) {
-        console.error("Failed to join room:", err);
-      }
-    })();
-
-    return () => {
-      // Cleanup media stream
-      if (localStreamRef.current) {
-        localStreamRef.current.getTracks().forEach(track => track.stop());
+    // ICE candidates
+    pc.onicecandidate = async (event) => {
+      if (event.candidate && roomId && user?._id) {
+        try {
+          await sendSignal({
+            roomId: roomId as any,
+            fromUserId: (user as any)._id,
+            toUserId: peerUserId as any,
+            kind: "candidate",
+            payload: {
+              candidate: event.candidate.candidate,
+              sdpMid: event.candidate.sdpMid ?? undefined,
+              sdpMLineIndex: event.candidate.sdpMLineIndex ?? undefined,
+            },
+          });
+        } catch (e) {
+          console.error("Failed to send ICE candidate", e);
+        }
       }
     };
-  }, [roomId]);
+
+    pc.onconnectionstatechange = () => {
+      if (pc && (pc.connectionState === "disconnected" || pc.connectionState === "failed")) {
+        // Cleanup on disconnect
+        pc.close();
+        peerConnectionsRef.current.delete(peerUserId);
+        remoteStreamsRef.current.delete(peerUserId);
+        forceRender((n) => n + 1);
+      }
+    };
+
+    peerConnectionsRef.current.set(peerUserId, pc);
+    return pc;
+  };
+
+  const createOfferTo = async (peerUserId: string) => {
+    if (!roomId || !user?._id) return;
+    const pc = ensurePeerConnection(peerUserId);
+    try {
+      const offer = await pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true });
+      await pc.setLocalDescription(offer);
+      await sendSignal({
+        roomId: roomId as any,
+        fromUserId: (user as any)._id,
+        toUserId: peerUserId as any,
+        kind: "offer",
+        payload: {
+          sdp: offer.sdp || "",
+          type: offer.type,
+        },
+      });
+    } catch (e) {
+      console.error("createOffer error", e);
+    }
+  };
+
+  // Handle incoming signals
+  useEffect(() => {
+    if (!signals || !roomId || !user?._id) return;
+
+    (async () => {
+      const ackIds: string[] = [];
+      for (const s of signals) {
+        try {
+          const fromId = (s.fromUserId as any) as string;
+          if (s.kind === "offer") {
+            const pc = ensurePeerConnection(fromId);
+            const remoteDesc = new RTCSessionDescription({ type: "offer", sdp: s.payload.sdp! });
+            if (pc.signalingState !== "stable") {
+              // Try rollback if needed
+              try {
+                await pc.setLocalDescription({ type: "rollback" } as any);
+              } catch {}
+            }
+            await pc.setRemoteDescription(remoteDesc);
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+            await sendSignal({
+              roomId: roomId as any,
+              fromUserId: (user as any)._id,
+              toUserId: fromId as any,
+              kind: "answer",
+              payload: { sdp: answer.sdp || "", type: answer.type },
+            });
+          } else if (s.kind === "answer") {
+            const pc = ensurePeerConnection(fromId);
+            const remoteDesc = new RTCSessionDescription({ type: "answer", sdp: s.payload.sdp! });
+            await pc.setRemoteDescription(remoteDesc);
+          } else if (s.kind === "candidate") {
+            const pc = ensurePeerConnection(fromId);
+            if (s.payload.candidate) {
+              try {
+                await pc.addIceCandidate({
+                  candidate: s.payload.candidate,
+                  sdpMid: s.payload.sdpMid,
+                  sdpMLineIndex: s.payload.sdpMLineIndex,
+                } as RTCIceCandidateInit);
+              } catch (e) {
+                console.warn("Failed to add ICE candidate", e);
+              }
+            }
+          } else if (s.kind === "leave") {
+            // Remote peer left
+            const pc = peerConnectionsRef.current.get(fromId);
+            pc?.close();
+            peerConnectionsRef.current.delete(fromId);
+            remoteStreamsRef.current.delete(fromId);
+            forceRender((n) => n + 1);
+          }
+        } finally {
+          ackIds.push((s as any)._id);
+        }
+      }
+      if (ackIds.length) {
+        try {
+          await acknowledgeSignals({ signalIds: ackIds as any });
+        } catch (e) {
+          console.error("Failed to acknowledge signals", e);
+        }
+      }
+    })();
+  }, [signals, roomId, user?._id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // After local media and participants are loaded, call others
+  useEffect(() => {
+    if (!participants || !roomId || !user?._id) return;
+    // Initiate offers to all others (mesh)
+    const others = participants
+      .map((p: any) => p.user?._id)
+      .filter((uid: any) => uid && uid !== (user as any)._id) as string[];
+
+    for (const otherId of others) {
+      // Only create offer if not already connected
+      if (!peerConnectionsRef.current.has(otherId)) {
+        createOfferTo(otherId);
+      }
+    }
+  }, [participants, roomId, user?._id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleLeaveRoom = async () => {
+    try {
+      if (roomId) {
+        // Notify peers
+        if (user?._id) {
+          for (const peerId of peerConnectionsRef.current.keys()) {
+            try {
+              await sendSignal({
+                roomId: roomId as any,
+                fromUserId: (user as any)._id,
+                toUserId: peerId as any,
+                kind: "leave",
+                payload: {},
+              });
+            } catch {}
+          }
+        }
+        await leaveRoom({ roomId: roomId as any });
+      }
+
+      peerConnectionsRef.current.forEach((pc) => pc.close());
+      peerConnectionsRef.current.clear();
+      remoteStreamsRef.current.clear();
+
+      if (localStreamRef.current) {
+        localStreamRef.current.getTracks().forEach((track) => track.stop());
+      }
+
+      navigate("/dashboard");
+      toast.success("Left the room");
+    } catch (error) {
+      console.error("Error leaving room:", error);
+      toast.error("Failed to leave room");
+    }
+  };
 
   const initializeMedia = async () => {
     try {
@@ -140,25 +330,6 @@ export default function VideoRoom() {
     }
   };
 
-  const handleLeaveRoom = async () => {
-    try {
-      if (roomId) {
-        await leaveRoom({ roomId: roomId as any });
-      }
-      
-      // Stop all media tracks
-      if (localStreamRef.current) {
-        localStreamRef.current.getTracks().forEach(track => track.stop());
-      }
-      
-      navigate("/dashboard");
-      toast.success("Left the room");
-    } catch (error) {
-      console.error("Error leaving room:", error);
-      toast.error("Failed to leave room");
-    }
-  };
-
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!message.trim() || !roomId) return;
@@ -204,6 +375,34 @@ export default function VideoRoom() {
       return email.substring(0, 2).toUpperCase();
     }
     return "U";
+  };
+
+  const RemoteVideos = () => {
+    const entries = Array.from(remoteStreamsRef.current.entries());
+    return (
+      <div className="absolute top-4 right-4 flex flex-col gap-2 max-h-[60vh] overflow-y-auto">
+        {entries.map(([uid, stream]) => (
+          <motion.div
+            key={uid}
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="w-40 h-28 bg-gray-700 rounded-lg overflow-hidden relative"
+          >
+            <video
+              autoPlay
+              playsInline
+              className="w-full h-full object-cover"
+              ref={(el) => {
+                if (el && el.srcObject !== stream) {
+                  el.srcObject = stream;
+                }
+              }}
+              muted={false}
+            />
+          </motion.div>
+        ))}
+      </div>
+    );
   };
 
   if (!room) {
@@ -408,6 +607,9 @@ export default function VideoRoom() {
                 ))}
             </div>
           )}
+
+          {/* Remote video tiles */}
+          <RemoteVideos />
         </div>
 
         {/* Chat Sidebar */}

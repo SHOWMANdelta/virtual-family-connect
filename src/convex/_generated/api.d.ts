@@ -22,6 +22,7 @@ import type * as http from "../http.js";
 import type * as messages from "../messages.js";
 import type * as notifications from "../notifications.js";
 import type * as rooms from "../rooms.js";
+import type * as signaling from "../signaling.js";
 import type * as users from "../users.js";
 
 /**
@@ -42,6 +43,7 @@ declare const fullApi: ApiFromModules<{
   messages: typeof messages;
   notifications: typeof notifications;
   rooms: typeof rooms;
+  signaling: typeof signaling;
   users: typeof users;
 }>;
 export declare const api: FilterApi<
