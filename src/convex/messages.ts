@@ -62,7 +62,8 @@ export const getRoomMessages = query({
       .first();
 
     if (!participant || participant.leftAt) {
-      throw new Error("NOT_IN_ROOM: You must be an active participant to read messages");
+      // Return empty to avoid races while the client is joining or after leaving
+      return [];
     }
 
     const messages = await ctx.db
