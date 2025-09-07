@@ -1195,13 +1195,14 @@ export default function VideoRoom() {
     return (
       <div
         className="
-          absolute top-20 right-4 bottom-28
-          z-20
-          w-72 md:w-80 lg:w-96
-          overflow-y-auto
+          absolute z-20
+          inset-x-4 bottom-28
+          flex gap-3 overflow-x-auto
           p-3
-          rounded-2xl bg-black/40 backdrop-blur-xl border border-white/10 shadow-2xl
-          flex flex-col gap-4
+          rounded-2xl bg-black/45 backdrop-blur-xl border border-white/10 shadow-2xl
+          md:inset-auto md:top-20 md:right-4 md:bottom-28
+          md:w-80 lg:w-96
+          md:flex-col md:gap-4 md:overflow-y-auto md:overflow-x-hidden
         "
         aria-label="Participants video panel"
       >
@@ -1226,7 +1227,8 @@ export default function VideoRoom() {
               animate={{ opacity: 1, scale: 1 }}
               className="
                 group relative
-                w-full h-44 sm:h-48
+                shrink-0
+                w-40 h-28 xs:w-44 xs:h-32 sm:w-48 sm:h-36 md:w-full md:h-44 lg:h-48
                 rounded-xl overflow-hidden
                 ring-1 ring-white/15 hover:ring-white/30 transition-all duration-200
                 shadow-[0_12px_32px_rgba(0,0,0,0.5)] bg-gray-900/70
@@ -1364,7 +1366,7 @@ export default function VideoRoom() {
                 >
                   {vol === 0 ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
                 </button>
-                <div className="w-24 pl-1">
+                <div className="w-20 sm:w-24 pl-1">
                   <Slider
                     value={[vol]}
                     min={0}
@@ -1654,22 +1656,22 @@ export default function VideoRoom() {
             )}
 
             {/* Video Controls Overlay */}
-            <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-30">
-              <div className="flex items-center space-x-4 bg-gray-900/90 backdrop-blur-md rounded-full px-7 py-4 shadow-2xl ring-1 ring-white/10">
+            <div className="absolute inset-x-4 bottom-4 z-50">
+              <div className="flex flex-wrap items-center justify-center gap-3 sm:gap-4 bg-gray-900/95 backdrop-blur-md rounded-xl px-4 py-3 sm:rounded-full sm:px-7 sm:py-4 shadow-2xl ring-1 ring-white/10">
                 <Button
                   variant="ghost"
                   size="sm"
                   onClick={toggleAudio}
-                  className={`rounded-full p-3 ${
+                  className={`rounded-full p-3 sm:p-3.5 ${
                     isAudioOn 
                       ? "bg-gray-700 hover:bg-gray-600" 
                       : "bg-red-600 hover:bg-red-700"
                   }`}
                 >
                   {isAudioOn ? (
-                    <Mic className="h-5 w-5" />
+                    <Mic className="h-5 w-5 sm:h-5 sm:w-5" />
                   ) : (
-                    <MicOff className="h-5 w-5" />
+                    <MicOff className="h-5 w-5 sm:h-5 sm:w-5" />
                   )}
                 </Button>
 
@@ -1677,16 +1679,16 @@ export default function VideoRoom() {
                   variant="ghost"
                   size="sm"
                   onClick={toggleVideo}
-                  className={`rounded-full p-3 ${
+                  className={`rounded-full p-3 sm:p-3.5 ${
                     isVideoOn 
                       ? "bg-gray-700 hover:bg-gray-600" 
                       : "bg-red-600 hover:bg-red-700"
                   }`}
                 >
                   {isVideoOn ? (
-                    <Video className="h-5 w-5" />
+                    <Video className="h-5 w-5 sm:h-5 sm:w-5" />
                   ) : (
-                    <VideoOff className="h-5 w-5" />
+                    <VideoOff className="h-5 w-5 sm:h-5 sm:w-5" />
                   )}
                 </Button>
 
@@ -1694,13 +1696,13 @@ export default function VideoRoom() {
                   variant="ghost"
                   size="sm"
                   onClick={toggleScreenShare}
-                  className={`rounded-full p-3 ${
+                  className={`rounded-full p-3 sm:p-3.5 ${
                     isScreenSharing 
                       ? "bg-blue-600 hover:bg-blue-700" 
                       : "bg-gray-700 hover:bg-gray-600"
                   }`}
                 >
-                  <Share className="h-5 w-5" />
+                  <Share className="h-5 w-5 sm:h-5 sm:w-5" />
                 </Button>
 
                 {/* Add: Fullscreen toggle button */}
@@ -1708,18 +1710,18 @@ export default function VideoRoom() {
                   variant="ghost"
                   size="sm"
                   onClick={() => toggleFullscreen()}
-                  className="rounded-full p-3 bg-gray-700 hover:bg-gray-600"
+                  className="rounded-full p-3 sm:p-3.5 bg-gray-700 hover:bg-gray-600"
                   aria-label="Toggle fullscreen"
                 >
-                  <Monitor className="h-5 w-5" />
+                  <Monitor className="h-5 w-5 sm:h-5 sm:w-5" />
                 </Button>
 
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="rounded-full p-3 bg-gray-700 hover:bg-gray-600"
+                  className="rounded-full p-3 sm:p-3.5 bg-gray-700 hover:bg-gray-600"
                 >
-                  <Settings className="h-5 w-5" />
+                  <Settings className="h-5 w-5 sm:h-5 sm:w-5" />
                 </Button>
 
                 {/* Add: Retry connection button */}
@@ -1727,19 +1729,19 @@ export default function VideoRoom() {
                   variant="ghost"
                   size="sm"
                   onClick={() => recoverLocalMediaAndRenegotiate()}
-                  className="rounded-full p-3 bg-gray-700 hover:bg-gray-600"
+                  className="rounded-full p-3 sm:p-3.5 bg-gray-700 hover:bg-gray-600"
                   aria-label="Retry connection"
                 >
-                  <RefreshCcw className="h-5 w-5" />
+                  <RefreshCcw className="h-5 w-5 sm:h-5 sm:w-5" />
                 </Button>
 
                 <Button
                   variant="ghost"
                   size="sm"
                   onClick={handleLeaveRoom}
-                  className="rounded-full p-3 bg-red-600 hover:bg-red-700"
+                  className="rounded-full p-3 sm:p-3.5 bg-red-600 hover:bg-red-700"
                 >
-                  <PhoneOff className="h-5 w-5" />
+                  <PhoneOff className="h-5 w-5 sm:h-5 sm:w-5" />
                 </Button>
               </div>
             </div>
