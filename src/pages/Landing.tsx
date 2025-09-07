@@ -30,6 +30,17 @@ export default function Landing() {
     }
   };
 
+  // Add: robust smooth scroll helper for nav buttons
+  const scrollToSection = (sectionId: string) => {
+    const el = document.getElementById(sectionId);
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+    } else {
+      // Fallback to hash navigation if element not found
+      window.location.hash = sectionId;
+    }
+  };
+
   const features = [
     {
       icon: Video,
@@ -108,10 +119,50 @@ export default function Landing() {
             </div>
             
             <div className="hidden md:flex items-center space-x-8">
-              <a href="#features" className="text-gray-600 hover:text-blue-600 transition-colors">Features</a>
-              <a href="#how-it-works" className="text-gray-600 hover:text-blue-600 transition-colors">How It Works</a>
-              <a href="#testimonials" className="text-gray-600 hover:text-blue-600 transition-colors">Testimonials</a>
-              <a href="#pricing" className="text-gray-600 hover:text-blue-600 transition-colors">Pricing</a>
+              <a
+                id="featuresBtn"
+                href="#features"
+                onClick={(e) => {
+                  e.preventDefault();
+                  scrollToSection("features");
+                }}
+                className="text-gray-600 hover:text-blue-600 transition-colors"
+              >
+                Features
+              </a>
+              <a
+                id="howItWorksBtn"
+                href="#how-it-works"
+                onClick={(e) => {
+                  e.preventDefault();
+                  scrollToSection("how-it-works");
+                }}
+                className="text-gray-600 hover:text-blue-600 transition-colors"
+              >
+                How It Works
+              </a>
+              <a
+                id="testimonialsBtn"
+                href="#testimonials"
+                onClick={(e) => {
+                  e.preventDefault();
+                  scrollToSection("testimonials");
+                }}
+                className="text-gray-600 hover:text-blue-600 transition-colors"
+              >
+                Testimonials
+              </a>
+              <a
+                id="pricingBtn"
+                href="#pricing"
+                onClick={(e) => {
+                  e.preventDefault();
+                  scrollToSection("pricing");
+                }}
+                className="text-gray-600 hover:text-blue-600 transition-colors"
+              >
+                Pricing
+              </a>
             </div>
 
             <div className="flex items-center space-x-4">
