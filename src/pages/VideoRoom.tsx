@@ -870,14 +870,26 @@ export default function VideoRoom() {
               ref={(el) => {
                 if (el && el.srcObject !== stream) {
                   el.srcObject = stream;
+                  el.muted = true; // Start muted to satisfy autoplay policies
                   el.play().catch((err) => {
                     console.warn("Auto-play failed for remote video; will rely on user gesture", err);
-                    toast.info(`Tap to play video for ${getDisplayName(uid)}`);
+                    toast.info(`Tap video to play for ${getDisplayName(uid)}`);
+                  });
+                }
+              }}
+              onClick={(e) => {
+                const el = e.currentTarget;
+                if (el.muted) {
+                  el.muted = false;
+                  el.play().catch((err) => {
+                    console.warn("Play after unmute failed", err);
+                    toast.info(`Tap again to play ${getDisplayName(uid)}`);
                   });
                 }
               }}
               onError={() => toast.error(`Remote video failed to render for ${getDisplayName(uid)}`)}
-              muted={false}
+              muted
+              aria-label={`Remote video from ${getDisplayName(uid)}. Tap to toggle audio.`}
             />
             <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-black/10" />
             <div className="absolute bottom-1 left-1 right-1 flex items-center gap-2 rounded-md p-1.5 bg-black/40 backdrop-blur-sm">
