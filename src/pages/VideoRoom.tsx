@@ -48,6 +48,7 @@ export default function VideoRoom() {
   
   const leaveRoom = useMutation(api.rooms.leaveRoom);
   const sendMessage = useMutation(api.messages.sendMessage);
+  const joinRoom = useMutation(api.rooms.joinRoom);
 
   useEffect(() => {
     if (!roomId) {
@@ -57,6 +58,15 @@ export default function VideoRoom() {
 
     // Initialize media stream
     initializeMedia();
+
+    // Auto-join the room when landing via share link
+    (async () => {
+      try {
+        await joinRoom({ roomId: roomId as any });
+      } catch (err) {
+        console.error("Failed to join room:", err);
+      }
+    })();
 
     return () => {
       // Cleanup media stream
@@ -165,6 +175,27 @@ export default function VideoRoom() {
     }
   };
 
+  const handleShareLink = async () => {
+    try {
+      if (!roomId) return;
+      const url = `${window.location.origin}/room/${roomId}`;
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(url);
+      } else {
+        // Fallback for older browsers
+        const textarea = document.createElement("textarea");
+        textarea.value = url;
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand("copy");
+        document.body.removeChild(textarea);
+      }
+      toast.success("Share link copied to clipboard");
+    } catch (error) {
+      toast.error("Failed to copy share link");
+    }
+  };
+
   const getInitials = (name?: string, email?: string) => {
     if (name) {
       return name.split(' ').map(n => n[0]).join('').toUpperCase();
@@ -216,6 +247,26 @@ export default function VideoRoom() {
             <Badge className="bg-green-600 whitespace-nowrap">
               {participants?.length || 0} participants
             </Badge>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleShareLink}
+              className="text-gray-300 hover:text-white hidden xs:flex"
+              aria-label="Share room link"
+            >
+              <Users className="h-4 w-4 mr-2" />
+              <span className="hidden sm:inline">Connect Family</span>
+              <span className="sm:hidden">Invite</span>
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleShareLink}
+              className="text-gray-300 hover:text-white xs:hidden"
+              aria-label="Share room link"
+            >
+              <Users className="h-4 w-4" />
+            </Button>
             <Button
               variant="ghost"
               size="sm"
