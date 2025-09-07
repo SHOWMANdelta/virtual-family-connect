@@ -129,6 +129,12 @@ export default function VideoRoom() {
   const createOfferTo = async (peerUserId: string) => {
     if (!roomId || !user?._id) return;
     const pc = ensurePeerConnection(peerUserId);
+    // Attach tracks in case they weren't present yet
+    attachLocalTracksToPc(pc);
+    // Only create an offer if stable to avoid glare/state issues
+    if (pc.signalingState !== "stable") {
+      return;
+    }
     try {
       const offer = await pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true });
       await pc.setLocalDescription(offer);
@@ -292,26 +298,46 @@ export default function VideoRoom() {
           if (s.kind === "offer") {
             const pc = ensurePeerConnection(fromId);
             const remoteDesc = new RTCSessionDescription({ type: "offer", sdp: s.payload.sdp! });
-            if (pc.signalingState !== "stable") {
-              // Try rollback if needed
-              try {
-                await pc.setLocalDescription({ type: "rollback" } as any);
-              } catch {}
+            try {
+              if (pc.signalingState !== "stable") {
+                // Try rollback if we've created an offer already
+                try {
+                  await pc.setLocalDescription({ type: "rollback" } as any);
+                } catch (e) {
+                  // If rollback fails, ignore this offer to avoid state errors
+                  console.warn("Rollback failed; ignoring offer", e);
+                  continue;
+                }
+              }
+              await pc.setRemoteDescription(remoteDesc);
+              // Only answer if we're in the correct state
+              if (pc.signalingState !== "have-remote-offer") {
+                continue;
+              }
+              const answer = await pc.createAnswer();
+              await pc.setLocalDescription(answer);
+              await sendSignal({
+                roomId: roomId as any,
+                fromUserId: (user as any)._id,
+                toUserId: fromId as any,
+                kind: "answer",
+                payload: { sdp: answer.sdp || "", type: answer.type },
+              });
+            } catch (e) {
+              console.error("Error handling offer", e);
             }
-            await pc.setRemoteDescription(remoteDesc);
-            const answer = await pc.createAnswer();
-            await pc.setLocalDescription(answer);
-            await sendSignal({
-              roomId: roomId as any,
-              fromUserId: (user as any)._id,
-              toUserId: fromId as any,
-              kind: "answer",
-              payload: { sdp: answer.sdp || "", type: answer.type },
-            });
           } else if (s.kind === "answer") {
             const pc = ensurePeerConnection(fromId);
-            const remoteDesc = new RTCSessionDescription({ type: "answer", sdp: s.payload.sdp! });
-            await pc.setRemoteDescription(remoteDesc);
+            try {
+              // Only set remote answer if we actually have a local offer outstanding
+              if (pc.signalingState !== "have-local-offer") {
+                continue;
+              }
+              const remoteDesc = new RTCSessionDescription({ type: "answer", sdp: s.payload.sdp! });
+              await pc.setRemoteDescription(remoteDesc);
+            } catch (e) {
+              console.error("Error handling answer", e);
+            }
           } else if (s.kind === "candidate") {
             const pc = ensurePeerConnection(fromId);
             if (s.payload.candidate) {

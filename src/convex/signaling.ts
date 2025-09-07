@@ -72,7 +72,8 @@ export const getSignals = query({
       .withIndex("by_room_and_user", (q) => q.eq("roomId", args.roomId).eq("userId", args.forUserId))
       .first();
     if (!participant) {
-      throw new Error("NOT_IN_ROOM: You are not a participant in this room");
+      // Return empty to avoid race while client is in the process of joining
+      return [];
     }
 
     try {
