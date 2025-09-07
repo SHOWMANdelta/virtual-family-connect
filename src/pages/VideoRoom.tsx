@@ -49,6 +49,8 @@ export default function VideoRoom() {
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
+  // Add: container ref for fullscreen
+  const mainContainerRef = useRef<HTMLDivElement>(null);
 
   // Add: remember mic enabled state to prevent echo when sharing system audio
   const wasMicEnabledRef = useRef<boolean>(true);
@@ -1122,6 +1124,26 @@ export default function VideoRoom() {
     return p?.user?.image;
   };
 
+  // Add: Fullscreen toggle helper
+  const toggleFullscreen = (el?: HTMLElement | null) => {
+    const target = el ?? mainContainerRef.current;
+    if (!target) return;
+    const docAny = document as any;
+    const elemAny = target as any;
+
+    const isFs = !!(document.fullscreenElement || docAny.webkitFullscreenElement || docAny.msFullscreenElement);
+    if (!isFs) {
+      (elemAny.requestFullscreen ||
+        elemAny.webkitRequestFullscreen ||
+        elemAny.msRequestFullscreen ||
+        elemAny.mozRequestFullScreen)?.call(elemAny);
+    } else {
+      (document.exitFullscreen ||
+        docAny.webkitExitFullscreen ||
+        docAny.msExitFullscreen)?.call(document);
+    }
+  };
+
   const RemoteVideos = () => {
     const entries = Array.from(remoteStreamsRef.current.entries());
     return (
@@ -1196,6 +1218,11 @@ export default function VideoRoom() {
                     // No video track: clear srcObject to avoid stale feed
                     if (el.srcObject) el.srcObject = null;
                   }
+                }}
+                onDoubleClick={(e) => {
+                  // Toggle fullscreen for this remote participant tile container
+                  const container = e.currentTarget.parentElement as HTMLElement | null;
+                  toggleFullscreen(container);
                 }}
                 onClick={(e) => {
                   const el = e.currentTarget;
@@ -1401,7 +1428,7 @@ export default function VideoRoom() {
 
       <div className="flex h-[calc(100vh-80px)]">
         {/* Main Video Area */}
-        <div className="flex-1 relative">
+        <div className="flex-1 relative" ref={mainContainerRef}>
           {/* Main Video */}
           <div className="h-full bg-gray-800 flex items-center justify-center relative">
             <video
@@ -1409,6 +1436,7 @@ export default function VideoRoom() {
               autoPlay
               muted
               playsInline
+              onDoubleClick={() => toggleFullscreen(mainContainerRef.current)}
               onLoadedMetadata={(e) => {
                 const el = e.currentTarget;
                 if (el.paused) {
@@ -1546,6 +1574,17 @@ export default function VideoRoom() {
                   }`}
                 >
                   <Share className="h-5 w-5" />
+                </Button>
+
+                {/* Add: Fullscreen toggle button */}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => toggleFullscreen()}
+                  className="rounded-full p-3 bg-gray-700 hover:bg-gray-600"
+                  aria-label="Toggle fullscreen"
+                >
+                  <Monitor className="h-5 w-5" />
                 </Button>
 
                 <Button
