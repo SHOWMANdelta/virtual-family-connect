@@ -50,6 +50,10 @@ export default function VideoRoom() {
   // Track which peers we've already alerted for connection issues
   const connectionAlertsRef = useRef<Set<string>>(new Set());
 
+  // NEW: timers for ICE gathering and media watchdogs per peer
+  const iceGatheringTimersRef = useRef<Map<string, number>>(new Map());
+  const mediaWatchdogRef = useRef<Map<string, number>>(new Map());
+
   const room = useQuery(api.rooms.getRoom, roomId ? { roomId: roomId as any } : "skip");
   const participants = useQuery(api.rooms.getRoomParticipants, roomId ? { roomId: roomId as any } : "skip");
   const messages = useQuery(api.messages.getRoomMessages, roomId ? { roomId: roomId as any } : "skip");
@@ -172,6 +176,18 @@ export default function VideoRoom() {
 
     pc.onconnectionstatechange = () => {
       if (pc && (pc.connectionState === "disconnected" || pc.connectionState === "failed")) {
+        // CLEAR: watchdogs and timers when losing connection
+        const iceTimer = iceGatheringTimersRef.current.get(peerUserId);
+        if (iceTimer) {
+          clearTimeout(iceTimer);
+          iceGatheringTimersRef.current.delete(peerUserId);
+        }
+        const mediaTimer = mediaWatchdogRef.current.get(peerUserId);
+        if (mediaTimer) {
+          clearTimeout(mediaTimer);
+          mediaWatchdogRef.current.delete(peerUserId);
+        }
+
         const key = `${peerUserId}:${pc.connectionState}`;
         if (!connectionAlertsRef.current.has(key)) {
           connectionAlertsRef.current.add(key);
@@ -188,6 +204,29 @@ export default function VideoRoom() {
         pendingCandidatesRef.current.delete(peerUserId);
         forceRender((n) => n + 1);
       }
+
+      // When connected, start a watchdog to ensure media flows
+      if (pc && pc.connectionState === "connected") {
+        // Clear old watchdogs if any
+        const existing = mediaWatchdogRef.current.get(peerUserId);
+        if (existing) clearTimeout(existing);
+
+        const timer = window.setTimeout(() => {
+          // Check if we actually have a remote stream with a live video track
+          const stream = remoteStreamsRef.current.get(peerUserId);
+          const hasLiveVideo =
+            !!stream &&
+            stream.getVideoTracks().some((t) => t.readyState === "live" && !t.muted);
+
+          if (!hasLiveVideo) {
+            toast.warning(
+              `Connected to ${getDisplayName(peerUserId)} but no video received yet. This may be a network or permissions issue.`
+            );
+          }
+          mediaWatchdogRef.current.delete(peerUserId);
+        }, 15000);
+        mediaWatchdogRef.current.set(peerUserId, timer);
+      }
     };
 
     // Also surface ICE layer issues
@@ -201,6 +240,51 @@ export default function VideoRoom() {
               ? `Network issue: ICE failed with ${getDisplayName(peerUserId)}`
               : `Network unstable: ICE disconnected from ${getDisplayName(peerUserId)}`
           );
+        }
+      }
+    };
+
+    // NEW: observe ICE gathering; warn if it takes too long
+    pc.onicegatheringstatechange = () => {
+      // Clear stale timer if any
+      const oldTimer = iceGatheringTimersRef.current.get(peerUserId);
+      if (oldTimer) {
+        clearTimeout(oldTimer);
+        iceGatheringTimersRef.current.delete(peerUserId);
+      }
+
+      if (pc.iceGatheringState === "gathering") {
+        const timer = window.setTimeout(() => {
+          toast.warning(
+            `Finding network routes to ${getDisplayName(peerUserId)} is taking longer than usual. Check network/firewall or switch networks.`
+          );
+          iceGatheringTimersRef.current.delete(peerUserId);
+        }, 10000);
+        iceGatheringTimersRef.current.set(peerUserId, timer);
+      }
+      if (pc.iceGatheringState === "complete") {
+        // Done gathering: clear timer if present
+        const t = iceGatheringTimersRef.current.get(peerUserId);
+        if (t) {
+          clearTimeout(t);
+          iceGatheringTimersRef.current.delete(peerUserId);
+        }
+      }
+    };
+
+    // NEW: basic signaling state observer for debugging/problem surfacing
+    pc.onsignalingstatechange = () => {
+      if (pc.signalingState === "closed") {
+        // Clean up timers when closed
+        const iceTimer = iceGatheringTimersRef.current.get(peerUserId);
+        if (iceTimer) {
+          clearTimeout(iceTimer);
+          iceGatheringTimersRef.current.delete(peerUserId);
+        }
+        const mediaTimer = mediaWatchdogRef.current.get(peerUserId);
+        if (mediaTimer) {
+          clearTimeout(mediaTimer);
+          mediaWatchdogRef.current.delete(peerUserId);
         }
       }
     };
@@ -639,8 +723,42 @@ export default function VideoRoom() {
                 kind: "answer",
                 payload: { sdp: answer.sdp || "", type: answer.type },
               });
-            } catch (e) {
-              console.error("Error handling offer", e);
+            } catch (e: any) {
+              // NEW: additional glare/invalid-state handling safeguard
+              if (e?.name === "InvalidStateError" || e?.message?.includes("InvalidState")) {
+                try {
+                  await pc.setLocalDescription({ type: "rollback" } as any);
+                } catch {}
+                // Best-effort retry once
+                try {
+                  await pc.setRemoteDescription(remoteDesc);
+                  const queued = pendingCandidatesRef.current.get(fromId) || [];
+                  for (const cand of queued) {
+                    try {
+                      await pc.addIceCandidate(cand);
+                    } catch (ee) {
+                      console.warn("Failed to add queued ICE after retry", ee);
+                    }
+                  }
+                  pendingCandidatesRef.current.delete(fromId);
+
+                  const answer = await pc.createAnswer();
+                  await pc.setLocalDescription(answer);
+                  await sendSignal({
+                    roomId: roomId as any,
+                    fromUserId: (user as any)._id,
+                    toUserId: fromId as any,
+                    kind: "answer",
+                    payload: { sdp: answer.sdp || "", type: answer.type },
+                  });
+                } catch (retryErr) {
+                  console.error("Retry after rollback failed", retryErr);
+                  toast.error(`Negotiation failed with ${getDisplayName(fromId)}. Retrying may help.`);
+                }
+              } else {
+                console.error("Error handling offer", e);
+                toast.error(`Failed to process offer from ${getDisplayName(fromId)}.`);
+              }
             }
           } else if (s.kind === "answer") {
             try {
