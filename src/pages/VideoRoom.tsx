@@ -193,25 +193,27 @@ export default function VideoRoom() {
     <div className="min-h-screen bg-gray-900 text-white">
       {/* Header */}
       <header className="bg-gray-800 border-b border-gray-700 px-6 py-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-3 sm:gap-4 flex-1 min-w-0">
             <Button
               variant="ghost"
               size="sm"
               onClick={() => navigate("/dashboard")}
-              className="text-gray-300 hover:text-white"
+              className="text-gray-300 hover:text-white shrink-0"
             >
               <ArrowLeft className="h-4 w-4 mr-2" />
-              Back
+              <span className="hidden xs:inline">Back</span>
             </Button>
-            <div>
-              <h1 className="text-lg font-semibold">{room.name}</h1>
-              <p className="text-sm text-gray-400">{room.description}</p>
+            <div className="min-w-0">
+              <h1 className="text-lg font-semibold truncate">{room.name}</h1>
+              <p className="text-sm text-gray-400 hidden sm:block truncate">
+                {room.description}
+              </p>
             </div>
           </div>
-          
-          <div className="flex items-center space-x-4">
-            <Badge className="bg-green-600">
+
+          <div className="flex items-center space-x-2 sm:space-x-4 mt-1 sm:mt-0">
+            <Badge className="bg-green-600 whitespace-nowrap">
               {participants?.length || 0} participants
             </Badge>
             <Button
@@ -219,6 +221,7 @@ export default function VideoRoom() {
               size="sm"
               onClick={() => setShowChat(!showChat)}
               className="text-gray-300 hover:text-white"
+              aria-label="Toggle chat"
             >
               <MessageCircle className="h-4 w-4" />
             </Button>
