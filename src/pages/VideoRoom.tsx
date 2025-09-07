@@ -53,6 +53,8 @@ export default function VideoRoom() {
   const localStreamRef = useRef<MediaStream | null>(null);
   // Add: container ref for fullscreen
   const mainContainerRef = useRef<HTMLDivElement>(null);
+  // Add: main stage video ref (shows admin/host if available, else fallback to local)
+  const mainVideoRef = useRef<HTMLVideoElement>(null);
 
   // Add: remember mic enabled state to prevent echo when sharing system audio
   const wasMicEnabledRef = useRef<boolean>(true);
@@ -1173,6 +1175,21 @@ export default function VideoRoom() {
     }
   };
 
+  // Helper: select the preferred video track for the main stage (admin/host video if available)
+  const getHostPreferredVideoTrack = () => {
+    const hostId = participants?.find((p: any) => p.isHost)?.user?._id as string | undefined;
+    if (hostId && String(hostId) !== String((user as any)?._id)) {
+      const hostStream = remoteStreamsRef.current.get(hostId);
+      if (hostStream) {
+        const vt = hostStream.getVideoTracks().find((t) => t.readyState === "live") || hostStream.getVideoTracks()[0];
+        return vt || null;
+      }
+    }
+    // Fallback to local camera track
+    const localTrack = localStreamRef.current?.getVideoTracks()[0] || null;
+    return localTrack;
+  };
+
   const RemoteVideos = () => {
     const entries = Array.from(remoteStreamsRef.current.entries());
     return (
@@ -1497,7 +1514,39 @@ export default function VideoRoom() {
           {/* Main Video */}
           <div className="h-full bg-gray-800 flex items-center justify-center relative">
             <video
-              ref={videoRef}
+              ref={(el) => {
+                mainVideoRef.current = el;
+                if (!el) return;
+                const preferredTrack = getHostPreferredVideoTrack();
+                if (preferredTrack) {
+                  const current = (el.srcObject as MediaStream | null) || null;
+                  const currentTrackId = current?.getVideoTracks?.()[0]?.id;
+                  if (currentTrackId !== preferredTrack.id) {
+                    const ms = new MediaStream();
+                    try {
+                      ms.addTrack(preferredTrack);
+                    } catch {}
+                    el.srcObject = ms;
+                    el.muted = true; // UI audio controlled via remote tiles
+                    el.play().catch(() => {
+                      toastOnce(`main:tap-to-play`, () =>
+                        toast.info("Tap to start video playback")
+                      );
+                    });
+                  }
+                } else {
+                  // fallback to local full stream if no track chosen
+                  if (localStreamRef.current) {
+                    el.srcObject = localStreamRef.current;
+                    el.muted = true;
+                    el.play().catch(() => {
+                      toastOnce(`main:tap-to-play-local`, () =>
+                        toast.info("Tap to start local video playback")
+                      );
+                    });
+                  }
+                }
+              }}
               autoPlay
               muted
               playsInline
@@ -1506,46 +1555,59 @@ export default function VideoRoom() {
                 const el = e.currentTarget;
                 if (el.paused) {
                   el.play().catch(() => {
-                    toastOnce(`local:loadedmetadata-play`, () =>
-                      toast.info("Tap to start local video playback")
+                    toastOnce(`main:loadedmetadata-play`, () =>
+                      toast.info("Tap to start video playback")
                     );
                   });
                 }
               }}
               onStalled={() =>
-                toastOnce(`local:stalled`, () =>
-                  toast.warning("Local video stalled. Reacquiring camera…")
+                toastOnce(`main:stalled`, () =>
+                  toast.warning("Video stalled. Attempting to recover…")
                 )
               }
               onWaiting={() =>
-                toastOnce(`local:waiting`, () =>
-                  toast.info("Waiting for local camera…")
+                toastOnce(`main:waiting`, () =>
+                  toast.info("Waiting for video…")
                 )
               }
               onEmptied={() =>
-                toastOnce(`local:emptied`, () =>
-                  toast.warning("Local video stream was interrupted")
+                toastOnce(`main:emptied`, () =>
+                  toast.warning("Video stream was interrupted")
                 )
               }
               onSuspend={() =>
-                toastOnce(`local:suspend`, () =>
-                  toast.info("Local video is temporarily suspended")
+                toastOnce(`main:suspend`, () =>
+                  toast.info("Video is temporarily suspended")
                 )
               }
               onError={() => {
-                toastOnce(`local:error`, () =>
-                  toast.error("Local video failed to render")
+                toastOnce(`main:error`, () =>
+                  toast.error("Video failed to render")
                 );
-                // Add: incremental local recovery after repeated errors
-                localVideoErrorCountRef.current += 1;
-                if (localVideoErrorCountRef.current >= 2) {
-                  recoverLocalMediaAndRenegotiate().finally(() => {
-                    localVideoErrorCountRef.current = 0;
-                  });
-                }
+                // Attempt to recover all connections if main fails
+                recoverLocalMediaAndRenegotiate().catch(() => {});
               }}
               className="w-full h-full object-cover"
             />
+
+            {/* Self preview (PiP) */}
+            <div className="absolute bottom-24 left-4 z-30">
+              <div className="w-40 h-28 sm:w-52 sm:h-36 rounded-xl overflow-hidden ring-2 ring-white/20 shadow-[0_8px_24px_rgba(0,0,0,0.45)] bg-black/40 backdrop-blur">
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  muted
+                  playsInline
+                  className="w-full h-full object-cover"
+                  aria-label="Your camera preview"
+                />
+              </div>
+              <div className="mt-1 text-[10px] text-white/80 px-1.5 py-0.5 rounded bg-black/40 inline-block">
+                You
+              </div>
+            </div>
+
             {needsPermissionPrompt && (
               <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/70 backdrop-blur-sm px-4">
                 <div className="max-w-md w-full bg-gray-800/90 border border-white/10 rounded-2xl p-6 shadow-2xl">
