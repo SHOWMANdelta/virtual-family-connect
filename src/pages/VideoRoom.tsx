@@ -90,7 +90,11 @@ export default function VideoRoom() {
 
   const room = useQuery(api.rooms.getRoom, roomId ? { roomId: roomId as any } : "skip");
   const participants = useQuery(api.rooms.getRoomParticipants, roomId ? { roomId: roomId as any } : "skip");
-  const messages = useQuery(api.messages.getRoomMessages, roomId ? { roomId: roomId as any } : "skip");
+  // Only query messages when both roomId and user are available to avoid AUTH_REQUIRED
+  const messages = useQuery(
+    api.messages.getRoomMessages,
+    roomId && user?._id ? { roomId: roomId as any } : "skip"
+  );
   
   const leaveRoom = useMutation(api.rooms.leaveRoom);
   const sendMessage = useMutation(api.messages.sendMessage);
@@ -1471,7 +1475,7 @@ export default function VideoRoom() {
       </header>
 
       <Dialog open={showInvite} onOpenChange={setShowInvite}>
-        <DialogContent className="bg-gray-800 text-white border border-gray-700 rounded-2xl shadow-xl data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 duration-200">
+        <DialogContent className="bg-gray-800 text-white border border-gray-700 rounded-2xl shadow-xl data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 duration-200">
           <DialogHeader>
             <DialogTitle>Invite a member</DialogTitle>
           </DialogHeader>
