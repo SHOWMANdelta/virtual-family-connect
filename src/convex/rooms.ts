@@ -293,3 +293,31 @@ export const inviteUserToRoom = mutation({
     });
   },
 });
+
+export const getRoomHealth = query({
+  args: {
+    roomId: v.id("rooms"),
+  },
+  handler: async (ctx, args) => {
+    const room = await ctx.db.get(args.roomId);
+    if (!room) {
+      throwErr("ROOM_NOT_FOUND", "Room not found", 404);
+    }
+    const now = Date.now();
+    const expired = !!(room!.endTime && now > room!.endTime);
+
+    const activeParticipants = await ctx.db
+      .query("roomParticipants")
+      .withIndex("by_room", (q) => q.eq("roomId", args.roomId))
+      .filter((q) => q.eq(q.field("leftAt"), undefined))
+      .collect();
+
+    return {
+      isActive: room!.isActive,
+      expired,
+      endTime: room!.endTime ?? null,
+      maxParticipants: room!.maxParticipants,
+      activeCount: activeParticipants.length,
+    };
+  },
+});

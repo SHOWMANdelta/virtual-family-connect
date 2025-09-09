@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { getCurrentUser } from "./users";
+import { throwErr } from "./errors";
 
 export const sendMessage = mutation({
   args: {
@@ -11,31 +12,31 @@ export const sendMessage = mutation({
   handler: async (ctx, args) => {
     const user = await getCurrentUser(ctx);
     if (!user) {
-      throw new Error("AUTH_REQUIRED: Must be authenticated");
+      throwErr("AUTH_REQUIRED", "Must be authenticated", 401);
     }
 
     // Validate room exists and is active
     const room = await ctx.db.get(args.roomId);
     if (!room) {
-      throw new Error("ROOM_NOT_FOUND: Room does not exist");
+      throwErr("ROOM_NOT_FOUND", "Room does not exist", 404);
     }
-    if (!room.isActive) {
-      throw new Error("ROOM_INACTIVE: Cannot send messages to inactive room");
+    if (!room!.isActive) {
+      throwErr("ROOM_INACTIVE", "Cannot send messages to inactive room", 403);
     }
 
     // Ensure sender is an active participant
     const participant = await ctx.db
       .query("roomParticipants")
-      .withIndex("by_room_and_user", (q) => q.eq("roomId", args.roomId).eq("userId", user._id))
+      .withIndex("by_room_and_user", (q) => q.eq("roomId", args.roomId).eq("userId", user!._id))
       .first();
 
     if (!participant || participant.leftAt) {
-      throw new Error("NOT_IN_ROOM: You must be an active participant to send messages");
+      throwErr("NOT_IN_ROOM", "You must be an active participant to send messages", 403);
     }
 
     const messageId = await ctx.db.insert("messages", {
       roomId: args.roomId,
-      senderId: user._id,
+      senderId: user!._id,
       content: args.content,
       messageType: args.messageType || "text",
       timestamp: Date.now(),
@@ -52,13 +53,13 @@ export const getRoomMessages = query({
   handler: async (ctx, args) => {
     const user = await getCurrentUser(ctx);
     if (!user) {
-      throw new Error("AUTH_REQUIRED: Must be authenticated");
+      throwErr("AUTH_REQUIRED", "Must be authenticated", 401);
     }
 
     // Ensure the requesting user is a participant in the room
     const participant = await ctx.db
       .query("roomParticipants")
-      .withIndex("by_room_and_user", (q) => q.eq("roomId", args.roomId).eq("userId", user._id))
+      .withIndex("by_room_and_user", (q) => q.eq("roomId", args.roomId).eq("userId", user!._id))
       .first();
 
     if (!participant || participant.leftAt) {

@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { getCurrentUser } from "./users";
+import { throwErr } from "./errors";
 
 export const sendSignal = mutation({
   args: {
@@ -18,8 +19,8 @@ export const sendSignal = mutation({
   },
   handler: async (ctx, args) => {
     const user = await getCurrentUser(ctx);
-    if (!user) throw new Error("AUTH_REQUIRED: Must be authenticated");
-    if (user._id !== args.fromUserId) throw new Error("NOT_ALLOWED: Cannot send on behalf of another user");
+    if (!user) throwErr("AUTH_REQUIRED", "Must be authenticated", 401);
+    if (user!._id !== args.fromUserId) throwErr("NOT_ALLOWED", "Cannot send on behalf of another user", 403);
 
     // Verify sender is a participant of the room
     const fromParticipant = await ctx.db
@@ -27,20 +28,16 @@ export const sendSignal = mutation({
       .withIndex("by_room_and_user", (q) => q.eq("roomId", args.roomId).eq("userId", args.fromUserId))
       .first();
     if (!fromParticipant || fromParticipant.leftAt) {
-      throw new Error("NOT_IN_ROOM: Sender is not an active participant in the room");
+      throwErr("NOT_IN_ROOM", "Sender is not an active participant in the room", 403);
     }
 
     // Ensure room exists and is active (avoid sending into dead/expired rooms)
     const room = await ctx.db.get(args.roomId);
-    if (!room) throw new Error("ROOM_NOT_FOUND: Room does not exist");
-    const isExpired = room.endTime && Date.now() > room.endTime;
-    if (isExpired || !room.isActive) {
-      throw new Error("ROOM_INACTIVE_OR_EXPIRED: Cannot send signals to inactive/expired room");
+    if (!room) throwErr("ROOM_NOT_FOUND", "Room does not exist", 404);
+    const isExpired = room!.endTime && Date.now() > room!.endTime;
+    if (isExpired || !room!.isActive) {
+      throwErr("ROOM_INACTIVE_OR_EXPIRED", "Cannot send signals to inactive/expired room", 403);
     }
-
-    // NOTE: Do NOT require recipient to be joined yet.
-    // This allows offers/answers/candidates to queue before the recipient fully joins.
-    // Recipient will fetch via getSignals after join.
 
     try {
       return await ctx.db.insert("signals", {
@@ -53,7 +50,7 @@ export const sendSignal = mutation({
       });
     } catch (err) {
       console.error("SIGNAL_SEND_FAILED", { err, args: { ...args, payload: "omitted" } });
-      throw new Error("SIGNAL_SEND_FAILED: Unable to enqueue signal");
+      throwErr("SIGNAL_SEND_FAILED", "Unable to enqueue signal", 500);
     }
   },
 });
@@ -65,8 +62,8 @@ export const getSignals = query({
   },
   handler: async (ctx, args) => {
     const user = await getCurrentUser(ctx);
-    if (!user) throw new Error("AUTH_REQUIRED: Must be authenticated");
-    if (user._id !== args.forUserId) throw new Error("NOT_ALLOWED: Cannot read signals for another user");
+    if (!user) throwErr("AUTH_REQUIRED", "Must be authenticated", 401);
+    if (user!._id !== args.forUserId) throwErr("NOT_ALLOWED", "Cannot read signals for another user", 403);
 
     // Ensure the requesting user is a participant in the room
     const participant = await ctx.db
@@ -86,7 +83,7 @@ export const getSignals = query({
       return rows;
     } catch (err) {
       console.error("SIGNAL_FETCH_FAILED", { err, args });
-      throw new Error("SIGNAL_FETCH_FAILED: Unable to fetch signals");
+      throwErr("SIGNAL_FETCH_FAILED", "Unable to fetch signals", 500);
     }
   },
 });
@@ -97,13 +94,13 @@ export const acknowledgeSignals = mutation({
   },
   handler: async (ctx, args) => {
     const user = await getCurrentUser(ctx);
-    if (!user) throw new Error("AUTH_REQUIRED: Must be authenticated");
+    if (!user) throwErr("AUTH_REQUIRED", "Must be authenticated", 401);
 
     try {
       for (const id of args.signalIds) {
         const s = await ctx.db.get(id);
         if (!s) continue;
-        if (s.toUserId !== user._id) {
+        if (s.toUserId !== user!._id) {
           // Skip silently to avoid leaking existence; could log
           continue;
         }
@@ -112,7 +109,7 @@ export const acknowledgeSignals = mutation({
       return true;
     } catch (err) {
       console.error("SIGNAL_ACK_FAILED", { err, argsCount: args.signalIds.length });
-      throw new Error("SIGNAL_ACK_FAILED: Unable to acknowledge signals");
+      throwErr("SIGNAL_ACK_FAILED", "Unable to acknowledge signals", 500);
     }
   },
 });
