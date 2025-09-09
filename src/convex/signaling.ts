@@ -21,24 +21,26 @@ export const sendSignal = mutation({
     if (!user) throw new Error("AUTH_REQUIRED: Must be authenticated");
     if (user._id !== args.fromUserId) throw new Error("NOT_ALLOWED: Cannot send on behalf of another user");
 
-    // Verify both sender and recipient are participants of the room
-    const [fromParticipant, toParticipant] = await Promise.all([
-      ctx.db
-        .query("roomParticipants")
-        .withIndex("by_room_and_user", (q) => q.eq("roomId", args.roomId).eq("userId", args.fromUserId))
-        .first(),
-      ctx.db
-        .query("roomParticipants")
-        .withIndex("by_room_and_user", (q) => q.eq("roomId", args.roomId).eq("userId", args.toUserId))
-        .first(),
-    ]);
+    // Verify sender is a participant of the room
+    const fromParticipant = await ctx.db
+      .query("roomParticipants")
+      .withIndex("by_room_and_user", (q) => q.eq("roomId", args.roomId).eq("userId", args.fromUserId))
+      .first();
+    if (!fromParticipant || fromParticipant.leftAt) {
+      throw new Error("NOT_IN_ROOM: Sender is not an active participant in the room");
+    }
 
-    if (!fromParticipant) {
-      throw new Error("NOT_IN_ROOM: Sender is not a participant in the room");
+    // Ensure room exists and is active (avoid sending into dead/expired rooms)
+    const room = await ctx.db.get(args.roomId);
+    if (!room) throw new Error("ROOM_NOT_FOUND: Room does not exist");
+    const isExpired = room.endTime && Date.now() > room.endTime;
+    if (isExpired || !room.isActive) {
+      throw new Error("ROOM_INACTIVE_OR_EXPIRED: Cannot send signals to inactive/expired room");
     }
-    if (!toParticipant) {
-      throw new Error("RECIPIENT_NOT_IN_ROOM: Recipient is not a participant in the room");
-    }
+
+    // NOTE: Do NOT require recipient to be joined yet.
+    // This allows offers/answers/candidates to queue before the recipient fully joins.
+    // Recipient will fetch via getSignals after join.
 
     try {
       return await ctx.db.insert("signals", {
