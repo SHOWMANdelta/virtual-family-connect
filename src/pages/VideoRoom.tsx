@@ -49,6 +49,10 @@ export default function VideoRoom() {
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviting, setInviting] = useState(false);
   
+  // Add: main video health state
+  const [mainVideoReady, setMainVideoReady] = useState(false);
+  const [mainVideoError, setMainVideoError] = useState<string | null>(null);
+  
   const videoRef = useRef<HTMLVideoElement>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   // Add: container ref for fullscreen
@@ -476,6 +480,25 @@ export default function VideoRoom() {
     }
   };
 
+  // Add: quick handler to retry main video playback and renegotiate
+  const handleVideoRetry = async () => {
+    try {
+      setMainVideoError(null);
+      await initializeMedia();
+      await recoverLocalMediaAndRenegotiate();
+      // Attempt to play main element if present
+      const el = mainVideoRef.current;
+      if (el && el.paused) {
+        await el.play().catch(() => {});
+      }
+      setMainVideoReady(true);
+      toast.success("Video reinitialized");
+    } catch (e) {
+      setMainVideoError("Retry failed. Please check permissions/devices.");
+      toast.error("Retry failed. Check camera/mic permissions.");
+    }
+  };
+
   // On mount: initialize media and join room
   useEffect(() => {
     if (!roomId || !user?._id) return;
@@ -681,6 +704,10 @@ export default function VideoRoom() {
       for (const pc of peerConnectionsRef.current.values()) {
         attachLocalTracksToPc(pc);
       }
+
+      // Set main video ready state
+      setMainVideoReady(true);
+      setMainVideoError(null);
     } catch (error: any) {
       // If permission denied, show prompt and guidance
       if (error && typeof error.name === "string" && error.name === "NotAllowedError") {
@@ -754,6 +781,8 @@ export default function VideoRoom() {
           }
           console.error("Error accessing media devices:", error, e1, e2);
           toast.error(msg);
+          setMainVideoError(msg || "Could not access camera or microphone");
+          setMainVideoReady(false);
         }
       }
     }
@@ -1567,6 +1596,19 @@ export default function VideoRoom() {
                   });
                 }
               }}
+              // Add: readiness and error handlers
+              onPlaying={() => {
+                setMainVideoReady(true);
+                setMainVideoError(null);
+              }}
+              onPause={() => {
+                // Don't treat user-intentional pauses as hard errors; just mark not ready
+                setMainVideoReady(false);
+              }}
+              onCanPlay={() => {
+                // If we can play, clear transient error
+                setMainVideoError(null);
+              }}
               onStalled={() =>
                 toastOnce(`main:stalled`, () =>
                   toast.warning("Video stalled. Attempting to recover…")
@@ -1587,10 +1629,13 @@ export default function VideoRoom() {
                   toast.info("Video is temporarily suspended")
                 )
               }
-              onError={() => {
+              onError={(e) => {
+                const errMsg = (e?.currentTarget?.error as any)?.message || "Video failed to render";
                 toastOnce(`main:error`, () =>
                   toast.error("Video failed to render")
                 );
+                setMainVideoError(errMsg);
+                setMainVideoReady(false);
                 // Attempt to recover all connections if main fails
                 recoverLocalMediaAndRenegotiate().catch(() => {});
               }}
@@ -1613,6 +1658,25 @@ export default function VideoRoom() {
                 You
               </div>
             </div>
+
+            {/* Video health banner */}
+            {(mainVideoError || !mainVideoReady) && (
+              <div className="absolute top-4 left-1/2 -translate-x-1/2 z-40">
+                <div className="flex items-center gap-3 max-w-[92vw] sm:max-w-xl rounded-xl border border-yellow-400/30 bg-yellow-500/10 text-yellow-200 px-4 py-2 backdrop-blur shadow-lg">
+                  <span className="text-xs sm:text-sm truncate">
+                    {mainVideoError || "Video not ready yet. If this takes long, retry."}
+                  </span>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={handleVideoRetry}
+                    className="h-8 px-3 bg-yellow-400/20 hover:bg-yellow-400/30 text-yellow-100"
+                  >
+                    Retry video
+                  </Button>
+                </div>
+              </div>
+            )}
 
             {needsPermissionPrompt && (
               <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/70 backdrop-blur-sm px-4">
