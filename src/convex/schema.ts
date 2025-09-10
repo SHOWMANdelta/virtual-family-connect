@@ -1,6 +1,7 @@
 import { authTables } from "@convex-dev/auth/server";
 import { defineSchema, defineTable } from "convex/server";
-import { Infer, v } from "convex/values";
+import { v } from "convex/values";
+import type { Infer } from "convex/values";
 
 // default user roles. can add / remove based on the project as needed
 export const ROLES = {

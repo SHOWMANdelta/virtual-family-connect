@@ -26,15 +26,12 @@ export const throwErr = (code: string, message: string, status: number = 400): n
  * Useful for logging or HTTP responses if needed.
  */
 export const parseError = (err: unknown): { code: string; message: string; status: number } => {
-  if (err instanceof ApiError) {
-    const split = err.message.split(": ");
-    const msg = split.length > 1 ? split.slice(1).join(": ") : err.message;
-    return { code: err.code, message: msg, status: err.status };
-  }
-  const fallbackMessage = err instanceof Error ? err.message : String(err);
-  const match = /^([A-Z_]+):\s*(.*)$/.exec(fallbackMessage);
+  const raw = err instanceof Error ? err.message : String(err);
+  const match = raw.match(/^([A-Z_]+):\s*(.*)$/);
   if (match) {
-    return { code: match[1], message: match[2], status: 400 };
+    const code = match[1] ?? "UNKNOWN";
+    const message = match[2] ?? raw;
+    return { code, message, status: 400 };
   }
-  return { code: "UNKNOWN", message: fallbackMessage, status: 500 };
+  return { code: "UNKNOWN", message: raw, status: 400 };
 };

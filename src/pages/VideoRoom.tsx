@@ -48,6 +48,8 @@ export default function VideoRoom() {
   const [showInvite, setShowInvite] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviting, setInviting] = useState(false);
+  // Add: API error state for backend failures
+  const [apiError, setApiError] = useState<{ code: string; message: string } | null>(null);
   
   // Add: main video health state
   const [mainVideoReady, setMainVideoReady] = useState(false);
@@ -74,6 +76,27 @@ export default function VideoRoom() {
     if (connectionAlertsRef.current.has(key)) return;
     connectionAlertsRef.current.add(key);
     fn();
+  };
+
+  // Helper: parse structured API errors "CODE: message"
+  const parseApiErrorMsg = (err: unknown): { code: string; message: string } => {
+    const raw = err instanceof Error ? err.message : String(err);
+    const m = raw.match(/^([A-Z_]+):\s*(.*)$/);
+    return { code: m?.[1] || "UNKNOWN", message: m?.[2] || raw };
+  };
+
+  // Retry joining the room if a backend error occurred
+  const retryJoin = async () => {
+    if (!roomId) return;
+    try {
+      await joinRoom({ roomId: roomId as any });
+      toast.success("Joined room");
+      setApiError(null);
+    } catch (e) {
+      const { code, message } = parseApiErrorMsg(e);
+      setApiError({ code, message });
+      toast.error(`${code}: ${message}`);
+    }
   };
 
   // NEW: timers for ICE gathering and media watchdogs per peer
@@ -508,7 +531,10 @@ export default function VideoRoom() {
       try {
         await joinRoom({ roomId: roomId as any });
       } catch (e) {
+        const { code, message } = parseApiErrorMsg(e);
+        setApiError({ code, message });
         console.error("Failed to join room", e);
+        toast.error(`${code}: ${message}`);
       }
     })();
 
@@ -1123,7 +1149,8 @@ export default function VideoRoom() {
       });
       setMessage("");
     } catch (error) {
-      toast.error("Failed to send message");
+      const { code, message } = parseApiErrorMsg(error);
+      toast.error(`${code}: ${message}`);
     }
   };
 
@@ -1157,11 +1184,8 @@ export default function VideoRoom() {
       setInviteEmail("");
       setShowInvite(false);
     } catch (e: any) {
-      const msg =
-        typeof e?.message === "string"
-          ? e.message
-          : "Failed to send invitation";
-      toast.error(msg);
+      const { code, message } = parseApiErrorMsg(e);
+      toast.error(`${code}: ${message}`);
     } finally {
       setInviting(false);
     }
@@ -1405,7 +1429,7 @@ export default function VideoRoom() {
                     min={0}
                     max={1}
                     step={0.01}
-                    onValueChange={([v]) => setRemoteVolume(uid, v)}
+                    onValueChange={(vals) => setRemoteVolume(uid, vals[0] ?? 0)}
                     aria-label="Participant volume"
                   />
                 </div>
@@ -1502,6 +1526,36 @@ export default function VideoRoom() {
           </div>
         </div>
       </header>
+
+      {/* Backend error banner */}
+      {apiError && (
+        <div className="px-6 py-3 bg-red-600/10 border-b border-red-500/30">
+          <div className="max-w-6xl mx-auto flex items-center justify-between gap-4">
+            <div className="flex items-center gap-2 min-w-0">
+              <Badge className="bg-red-600/80 truncate">{apiError.code}</Badge>
+              <p className="text-sm text-red-200 truncate">{apiError.message}</p>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={retryJoin}
+                className="text-red-200 hover:text-white"
+              >
+                Retry join
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setApiError(null)}
+                className="text-red-200 hover:text-white"
+              >
+                Dismiss
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <Dialog open={showInvite} onOpenChange={setShowInvite}>
         <DialogContent className="bg-gray-800 text-white border border-gray-700 rounded-2xl shadow-xl data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 duration-200">
