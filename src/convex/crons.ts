@@ -15,11 +15,31 @@ const deleteExpiredCallInvites = internalMutation({
       .withIndex("by_type_and_createdAt", (q) => q.eq("type", "call"))
       .order("asc");
 
+    // Add: robust error handling and metrics
+    let scanned = 0;
+    let deleted = 0;
+    let failed = 0;
+
     for await (const notif of query) {
+      scanned++;
       // Stop early if newer than cutoff
       if (notif.createdAt > cutoff) break;
-      await ctx.db.delete(notif._id);
+
+      try {
+        await ctx.db.delete(notif._id);
+        deleted++;
+      } catch (err) {
+        failed++;
+        console.error("[crons.deleteExpiredCallInvites] Failed to delete", {
+          notifId: notif._id,
+          error: err,
+        });
+        // continue to next record
+      }
     }
+
+    // Return structured metrics for visibility
+    return { scanned, deleted, failed, cutoff };
   },
 });
 
@@ -28,10 +48,19 @@ const triggerCleanup = internalAction({
   args: {},
   handler: async (ctx) => {
     const THIRTY_SECONDS = 30_000;
-    await ctx.runMutation(internal.crons.deleteExpiredCallInvites, {
-      now: Date.now(),
-      thresholdMs: THIRTY_SECONDS,
-    });
+    try {
+      const result = await ctx.runMutation(internal.crons.deleteExpiredCallInvites, {
+        now: Date.now(),
+        thresholdMs: THIRTY_SECONDS,
+      });
+      // Add: structured log for observability
+      console.log("[crons.triggerCleanup] Completed", result);
+      return result;
+    } catch (err) {
+      console.error("[crons.triggerCleanup] Cleanup failed", err);
+      // Re-throw to surface the failure to Convex logs/monitoring
+      throw err;
+    }
   },
 });
 
