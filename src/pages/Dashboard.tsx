@@ -461,7 +461,7 @@ export default function Dashboard() {
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="text-sm font-medium text-gray-600">Connections</p>
-                      <p className="text-2xl font-bold text-gray-900">{connections?.filter(c => c.isApproved).length || 0}</p>
+                      <p className="text-2xl font-bold text-gray-900">{connections?.filter((c: any) => c.isApproved).length || 0}</p>
                     </div>
                     <Users className="h-8 w-8 text-green-600" />
                   </div>
@@ -504,7 +504,7 @@ export default function Dashboard() {
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-4">
-                    {pendingRequests.map((request) => (
+                    {pendingRequests.map((request: any) => (
                       <div key={request._id} className="flex items-center justify-between p-4 border rounded-lg">
                         <div>
                           <p className="font-medium">{request.relative?.name || request.relative?.email}</p>
@@ -537,7 +537,7 @@ export default function Dashboard() {
               <CardContent>
                 {rooms && rooms.length > 0 ? (
                   <div className="space-y-4">
-                    {rooms.map((room) => (
+                    {rooms.map((room: any) => (
                       <div key={room._id} className="flex items-center justify-between p-4 border rounded-lg">
                         <div>
                           <h3 className="font-medium">{room.name}</h3>
@@ -570,7 +570,7 @@ export default function Dashboard() {
               <CardContent>
                 {connections && connections.length > 0 ? (
                   <div className="space-y-4">
-                    {connections.filter(c => c.isApproved).map((connection) => (
+                    {connections.filter((c: any) => c.isApproved).map((connection: any) => (
                       <div key={connection._id} className="flex items-center justify-between p-4 border rounded-lg">
                         <div>
                           <h3 className="font-medium">
@@ -615,7 +615,7 @@ export default function Dashboard() {
               <CardContent>
                 {appointments && appointments.length > 0 ? (
                   <div className="space-y-4">
-                    {appointments.map((appointment) => (
+                    {appointments.map((appointment: any) => (
                       <div key={appointment._id} className="flex items-center justify-between p-4 border rounded-lg">
                         <div>
                           <h3 className="font-medium">{appointment.title}</h3>

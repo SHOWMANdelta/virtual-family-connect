@@ -71,6 +71,9 @@ export default function VideoRoom() {
   // Add: local video error counter
   const localVideoErrorCountRef = useRef<number>(0);
 
+  // Add: remember last processed offer SDP per peer to avoid reprocessing duplicates
+  const lastOfferByPeerRef = useRef<Map<string, string>>(new Map()); // De-dup incoming offers per peer
+
   // Helper: emit a one-time toast using a unique key
   const toastOnce = (key: string, fn: () => void) => {
     if (connectionAlertsRef.current.has(key)) return;
@@ -278,6 +281,7 @@ export default function VideoRoom() {
       }
     };
 
+    // Override ICE connection state handler with recovery logic to avoid stale/overridden assignments
     pc.oniceconnectionstatechange = () => {
       if (pc.iceConnectionState === "failed" || pc.iceConnectionState === "disconnected") {
         const key = `${peerUserId}:ice:${pc.iceConnectionState}`;
@@ -339,24 +343,6 @@ export default function VideoRoom() {
         }
       } catch (err) {
         console.warn("onicecandidateerror handling failed", err);
-      }
-    };
-
-    pc.oniceconnectionstatechange = () => {
-      if (pc.iceConnectionState === "failed" || pc.iceConnectionState === "disconnected") {
-        const key = `${peerUserId}:ice:${pc.iceConnectionState}`;
-        if (!connectionAlertsRef.current.has(key)) {
-          connectionAlertsRef.current.add(key);
-          toast.warning(
-            pc.iceConnectionState === "failed"
-              ? `Couldn't establish a stable path to ${getDisplayName(
-                  peerUserId
-                )}. Tips: disable VPN, check firewall, ensure both sides use HTTPS, or switch networks/Wi‑Fi bands.`
-              : `Connection to ${getDisplayName(
-                  peerUserId
-                )} looks unstable. Check your Wi‑Fi/cellular signal or switch networks.`
-          );
-        }
       }
     };
 
@@ -610,7 +596,7 @@ export default function VideoRoom() {
           if (wantsPrompt && !hasMedia && !labelsVisible) {
             setNeedsPermissionPrompt(true);
             setPermissionDetail(
-              "Camera and microphone access is required. Click below to enable. If already granted, use the lock icon in the address bar to allow."
+              "Camera and microphone access is required. Click below to enable. If already granted, use the lock icon in the address bar to allow camera & microphone."
             );
           } else {
             setNeedsPermissionPrompt(false);
@@ -912,103 +898,108 @@ export default function VideoRoom() {
     }
   };
 
-  // Handle incoming signals
+  /**
+   * Handle incoming signaling messages robustly:
+   * - Deduplicate offers
+   * - Glare handling via rollback for polite peers
+   * - Buffer ICE candidates until remote description is set
+   * - Hard recovery by rebuilding PC on unexpected errors
+   * - Acknowledge processed signals after loop
+   */
   useEffect(() => {
     if (!signals || !roomId || !user?._id) return;
 
-    (async () => {
+    const process = async () => {
       const ackIds: string[] = [];
-      for (const s of signals) {
-        try {
-          const fromId = (s.fromUserId as any) as string;
-          const pc = ensurePeerConnection(fromId);
-          const polite = isPoliteWith(fromId);
 
+      for (const s of signals) {
+        const fromId = String((s as any).fromUserId);
+        const pc = ensurePeerConnection(fromId);
+        const polite = isPoliteWith(fromId);
+
+        try {
           if (s.kind === "offer") {
+            if (!s.payload?.sdp) {
+              console.warn("Received offer without SDP from", fromId);
+              continue;
+            }
+
+            const incomingSdp = s.payload.sdp as string;
+
+            // De-duplicate identical offers from the same peer
+            const lastSdp = lastOfferByPeerRef.current.get(fromId);
+            if (lastSdp && lastSdp === incomingSdp) {
+              continue;
+            }
+
             // Glare handling: if not stable and we're impolite, ignore this offer
             if (pc.signalingState !== "stable") {
               if (!polite) {
-                // Ignore and let the other side proceed
+                // Ignore when we're the impolite peer
                 continue;
               }
-              // Polite peer rolls back if needed
               try {
                 await pc.setLocalDescription({ type: "rollback" } as any);
-              } catch (e) {
-                console.warn("Rollback failed; ignoring offer", e);
-                continue;
+              } catch {
+                // ignore rollback errors
               }
             }
 
-            const remoteDesc = new RTCSessionDescription({ type: "offer", sdp: s.payload.sdp! });
+            const remoteDesc = new RTCSessionDescription({ type: "offer", sdp: incomingSdp });
             try {
               await pc.setRemoteDescription(remoteDesc);
-              // Flush any buffered ICE candidates now that remote description is set
-              const queued = pendingCandidatesRef.current.get(fromId) || [];
-              for (const cand of queued) {
-                try {
-                  await pc.addIceCandidate(cand);
-                } catch (e) {
-                  console.warn("Failed to add queued ICE candidate", e);
-                }
-              }
-              pendingCandidatesRef.current.delete(fromId);
-
-              const answer = await pc.createAnswer();
-              await pc.setLocalDescription(answer);
-              await sendSignal({
-                roomId: roomId as any,
-                fromUserId: (user as any)._id,
-                toUserId: fromId as any,
-                kind: "answer",
-                payload: { sdp: answer.sdp || "", type: answer.type },
-              });
             } catch (e: any) {
-              // NEW: additional glare/invalid-state handling safeguard
-              if (e?.name === "InvalidStateError" || e?.message?.includes("InvalidState")) {
+              // Retry after rollback for InvalidState
+              if (e?.name === "InvalidStateError" || String(e?.message || "").includes("InvalidState")) {
                 try {
-                  await pc.setLocalDescription({ type: "rollback" } as any);
-                } catch {}
-                // Best-effort retry once
-                try {
+                  try {
+                    await pc.setLocalDescription({ type: "rollback" } as any);
+                  } catch {}
                   await pc.setRemoteDescription(remoteDesc);
-                  const queued = pendingCandidatesRef.current.get(fromId) || [];
-                  for (const cand of queued) {
-                    try {
-                      await pc.addIceCandidate(cand);
-                    } catch (ee) {
-                      console.warn("Failed to add queued ICE after retry", ee);
-                    }
-                  }
-                  pendingCandidatesRef.current.delete(fromId);
-
-                  const answer = await pc.createAnswer();
-                  await pc.setLocalDescription(answer);
-                  await sendSignal({
-                    roomId: roomId as any,
-                    fromUserId: (user as any)._id,
-                    toUserId: fromId as any,
-                    kind: "answer",
-                    payload: { sdp: answer.sdp || "", type: answer.type },
-                  });
                 } catch (retryErr) {
                   console.error("Retry after rollback failed", retryErr);
                   toast.error(`Negotiation failed with ${getDisplayName(fromId)}. Retrying may help.`);
+                  // Bubble up to trigger hard recovery below
+                  throw retryErr;
                 }
               } else {
-                console.error("Error handling offer", e);
-                toast.error(`Failed to process offer from ${getDisplayName(fromId)}.`);
+                throw e;
               }
             }
-          } else if (s.kind === "answer") {
-            try {
-              // Only set remote answer if we actually have a local offer outstanding
-              if (pc.signalingState !== "have-local-offer") {
-                continue;
+
+            // Flush buffered ICE candidates
+            const queued = pendingCandidatesRef.current.get(fromId) || [];
+            for (const cand of queued) {
+              try {
+                await pc.addIceCandidate(cand);
+              } catch (ee) {
+                console.warn("Failed to add queued ICE candidate", ee);
               }
-              const remoteDesc = new RTCSessionDescription({ type: "answer", sdp: s.payload.sdp! });
+            }
+            pendingCandidatesRef.current.delete(fromId);
+
+            // Answer
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+            await sendSignal({
+              roomId: roomId as any,
+              fromUserId: (user as any)._id,
+              toUserId: fromId as any,
+              kind: "answer",
+              payload: { sdp: answer.sdp || "", type: answer.type },
+            });
+
+            // Mark this offer as processed
+            lastOfferByPeerRef.current.set(fromId, incomingSdp);
+          } else if (s.kind === "answer") {
+            // Only apply answer if we actually have a local offer outstanding
+            if (pc.signalingState === "have-local-offer") {
+              const remoteDesc = new RTCSessionDescription({
+                type: "answer",
+                sdp: s.payload?.sdp || "",
+              });
               await pc.setRemoteDescription(remoteDesc);
-              // Flush buffered ICE candidates once remote desc is present
+
               const queued = pendingCandidatesRef.current.get(fromId) || [];
               for (const cand of queued) {
                 try {
@@ -1018,18 +1009,18 @@ export default function VideoRoom() {
                 }
               }
               pendingCandidatesRef.current.delete(fromId);
-            } catch (e) {
-              console.error("Error handling answer", e);
+            } else {
+              // Ignore unexpected answer
             }
           } else if (s.kind === "candidate") {
-            if (s.payload.candidate) {
+            const payload = s.payload;
+            if (payload?.candidate) {
               const cand: RTCIceCandidateInit = {
-                candidate: s.payload.candidate,
-                sdpMid: s.payload.sdpMid,
-                sdpMLineIndex: s.payload.sdpMLineIndex,
+                candidate: payload.candidate,
+                sdpMid: payload.sdpMid,
+                sdpMLineIndex: payload.sdpMLineIndex,
               };
               try {
-                // Buffer ICE if remoteDescription not set yet; else apply immediately
                 if (!pc.remoteDescription) {
                   const arr = pendingCandidatesRef.current.get(fromId) || [];
                   arr.push(cand);
@@ -1042,19 +1033,46 @@ export default function VideoRoom() {
               }
             }
           } else if (s.kind === "leave") {
-            // Remote peer left
             const leavingPc = peerConnectionsRef.current.get(fromId);
-            leavingPc?.close();
+            try {
+              leavingPc?.close();
+            } catch {}
             peerConnectionsRef.current.delete(fromId);
             remoteStreamsRef.current.delete(fromId);
             makingOfferRef.current.delete(fromId);
             pendingCandidatesRef.current.delete(fromId);
+            lastOfferByPeerRef.current.delete(fromId);
             forceRender((n) => n + 1);
+          }
+        } catch (e) {
+          // Hard recovery on unexpected errors in offer path
+          console.error("Signal handling error", e);
+          if (s.kind === "offer") {
+            try {
+              try {
+                pc.close();
+              } catch {}
+              peerConnectionsRef.current.delete(fromId);
+              remoteStreamsRef.current.delete(fromId);
+              makingOfferRef.current.delete(fromId);
+              pendingCandidatesRef.current.delete(fromId);
+              lastOfferByPeerRef.current.delete(fromId);
+
+              const fresh = ensurePeerConnection(fromId);
+              attachLocalTracksToPc(fresh);
+              await createOfferTo(fromId);
+
+              toast.warning(`Recovered from an offer error with ${getDisplayName(fromId)}. Reconnecting...`);
+            } catch (recoverErr) {
+              console.error("Hard recovery after offer error failed", recoverErr);
+              toast.error(`Failed to process offer from ${getDisplayName(fromId)}.`);
+            }
           }
         } finally {
           ackIds.push((s as any)._id);
         }
       }
+
       if (ackIds.length) {
         try {
           await acknowledgeSignals({ signalIds: ackIds as any });
@@ -1062,8 +1080,10 @@ export default function VideoRoom() {
           console.error("Failed to acknowledge signals", e);
         }
       }
-    })();
-  }, [signals, roomId, user?._id]); // eslint-disable-line react-hooks/exhaustive-deps
+    };
+
+    process();
+  }, [signals, roomId, user?._id]);
 
   // After local media and participants are loaded, call others
   useEffect(() => {
@@ -1328,7 +1348,7 @@ export default function VideoRoom() {
                       el.play().catch((err) => {
                         console.warn("Auto-play failed for remote video track", err);
                         toastOnce(`remote:${uid}:tap-to-play:${preferredTrack.id}`, () =>
-                          toast.info(`Tap to play ${getDisplayName(uid)}'s video`)
+                          toast.info(`Tap to play ${getDisplayName(uid)}`)
                         );
                       });
                     } else {
@@ -1492,15 +1512,6 @@ export default function VideoRoom() {
               <Users className="h-4 w-4 mr-2" />
               <span className="hidden sm:inline">Connect Family</span>
               <span className="sm:hidden">Invite</span>
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleShareLink}
-              className="text-gray-300 hover:text-white xs:hidden"
-              aria-label="Share room link"
-            >
-              <Users className="h-4 w-4" />
             </Button>
             <Button
               variant="ghost"
@@ -1873,9 +1884,9 @@ export default function VideoRoom() {
           {participants && participants.length > 1 && (
             <div className="absolute top-4 right-4 space-y-2">
               {participants
-                .filter(p => p.user?._id !== user?._id)
+                .filter((p: any) => p.user?._id !== user?._id)
                 .slice(0, 3)
-                .map((participant) => (
+                .map((participant: any) => (
                   <motion.div
                     key={participant._id}
                     initial={{ opacity: 0, scale: 0.85 }}
@@ -1933,7 +1944,7 @@ export default function VideoRoom() {
 
             <ScrollArea className="flex-1 p-4">
               <div className="space-y-4">
-                {messages?.map((msg) => (
+                {messages?.map((msg: any) => (
                   <div key={msg._id} className="flex space-x-3">
                     <Avatar className="w-8 h-8">
                       <AvatarImage src={msg.sender?.image} />

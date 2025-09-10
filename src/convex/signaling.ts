@@ -80,7 +80,16 @@ export const getSignals = query({
         .query("signals")
         .withIndex("by_room_and_to", (q) => q.eq("roomId", args.roomId).eq("toUserId", args.forUserId))
         .collect();
-      return rows;
+
+      // De-duplicate per (fromUserId, kind), keeping the latest by createdAt to avoid processing stale/duplicate offers
+      const latestBySenderAndKind = new Map<string, typeof rows[number]>();
+      for (const r of rows) {
+        const key = `${r.fromUserId}:${r.kind}`;
+        const prev = latestBySenderAndKind.get(key);
+        if (!prev || r.createdAt > prev.createdAt) latestBySenderAndKind.set(key, r);
+      }
+      const deduped = Array.from(latestBySenderAndKind.values()).sort((a, b) => a.createdAt - b.createdAt);
+      return deduped;
     } catch (err) {
       console.error("SIGNAL_FETCH_FAILED", { err, args });
       throwErr("SIGNAL_FETCH_FAILED", "Unable to fetch signals", 500);

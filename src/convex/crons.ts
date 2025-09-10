@@ -1,13 +1,14 @@
 import { cronJobs } from "convex/server";
 import { internal } from "./_generated/api";
-import { internalAction, internalMutation } from "./_generated/server";
+import { internalMutation } from "./_generated/server";
 import { v } from "convex/values";
 
 // Mutation: delete "call" notifications older than (now - thresholdMs)
 const deleteExpiredCallInvites = internalMutation({
-  args: { now: v.number(), thresholdMs: v.number() },
+  args: { thresholdMs: v.number() },
   handler: async (ctx, args) => {
-    const cutoff = args.now - args.thresholdMs;
+    const now = Date.now();
+    const cutoff = now - args.thresholdMs;
 
     // Use the composite index to efficiently find old "call" notifications
     const query = ctx.db
@@ -43,36 +44,16 @@ const deleteExpiredCallInvites = internalMutation({
   },
 });
 
-// Action: trigger cleanup with a 30s threshold
-const triggerCleanup = internalAction({
-  args: {},
-  handler: async (ctx) => {
-    const THIRTY_SECONDS = 30_000;
-    try {
-      const result = await ctx.runMutation(internal.crons.deleteExpiredCallInvites, {
-        now: Date.now(),
-        thresholdMs: THIRTY_SECONDS,
-      });
-      // Add: structured log for observability
-      console.log("[crons.triggerCleanup] Completed", result);
-      return result;
-    } catch (err) {
-      console.error("[crons.triggerCleanup] Cleanup failed", err);
-      // Re-throw to surface the failure to Convex logs/monitoring
-      throw err;
-    }
-  },
-});
-
 const crons = cronJobs();
 
 // Run every 30 seconds
 crons.interval(
   "cleanup old call invitations",
   { seconds: 30 },
-  internal.crons.triggerCleanup,
-  {},
+  internal.crons.deleteExpiredCallInvites,
+  { thresholdMs: 30_000 },
 );
 
 export default crons;
-export { deleteExpiredCallInvites, triggerCleanup };
+// Only re-export the mutation
+export { deleteExpiredCallInvites };
