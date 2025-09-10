@@ -146,7 +146,8 @@ const schema = defineSchema(
       readAt: v.optional(v.number()),
       createdAt: v.number(),
     }).index("by_recipient", ["recipientId"])
-      .index("by_read", ["read"]),
+      .index("by_read", ["read"])
+      .index("by_type_and_createdAt", ["type", "createdAt"]),
 
     // Appointments
     appointments: defineTable({

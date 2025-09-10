@@ -17,6 +17,7 @@ import type * as appointments from "../appointments.js";
 import type * as auth_emailOtp from "../auth/emailOtp.js";
 import type * as auth from "../auth.js";
 import type * as connections from "../connections.js";
+import type * as crons from "../crons.js";
 import type * as email from "../email.js";
 import type * as errors from "../errors.js";
 import type * as http from "../http.js";
@@ -39,6 +40,7 @@ declare const fullApi: ApiFromModules<{
   "auth/emailOtp": typeof auth_emailOtp;
   auth: typeof auth;
   connections: typeof connections;
+  crons: typeof crons;
   email: typeof email;
   errors: typeof errors;
   http: typeof http;
