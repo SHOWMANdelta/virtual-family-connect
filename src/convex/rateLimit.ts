@@ -19,6 +19,7 @@ import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import { internalMutation } from "./_generated/server";
 import type { MutationCtx } from "./_generated/server";
+import { ApiError } from "./errors";
 
 const MINUTE = 60 * 1000;
 
@@ -134,8 +135,9 @@ export const consumeOtpSend = internalMutation({
       // reject has already invalidated whatever the user is holding. Saying only
       // "try again later" would leave them typing a code that can't work and
       // reading the resulting "invalid code" as a second, unrelated bug.
-      throw new Error(
-        `OTP_RATE_LIMITED: Too many sign-in codes requested for this address. Any code you already received has stopped working — request a fresh one in ${describeWait(perAddress.retryAfterSeconds)}.`,
+      throw new ApiError(
+        "OTP_RATE_LIMITED",
+        `Too many sign-in codes requested for this address. Any code you already received has stopped working — request a fresh one in ${describeWait(perAddress.retryAfterSeconds)}.`,
       );
     }
 
@@ -143,8 +145,9 @@ export const consumeOtpSend = internalMutation({
     if (!global.allowed) {
       // Deliberately vaguer: the caller isn't personally at fault, and the exact
       // deployment-wide threshold isn't something to advertise.
-      throw new Error(
-        `OTP_RATE_LIMITED: Sign-in codes are temporarily throttled on this server. Try again in ${describeWait(global.retryAfterSeconds)}.`,
+      throw new ApiError(
+        "OTP_RATE_LIMITED",
+        `Sign-in codes are temporarily throttled on this server. Try again in ${describeWait(global.retryAfterSeconds)}.`,
       );
     }
   },
@@ -164,8 +167,9 @@ export async function enforceInviteLimit(
 ): Promise<void> {
   const verdict = await consume(ctx, `invite:${userId}`, INVITE_PER_USER);
   if (!verdict.allowed) {
-    throw new Error(
-      `INVITE_RATE_LIMITED: You've sent a lot of invitations recently. Try again in ${describeWait(verdict.retryAfterSeconds)}.`,
+    throw new ApiError(
+      "INVITE_RATE_LIMITED",
+      `You've sent a lot of invitations recently. Try again in ${describeWait(verdict.retryAfterSeconds)}.`,
     );
   }
 }

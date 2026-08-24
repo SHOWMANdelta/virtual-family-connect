@@ -120,8 +120,15 @@ function rawMessage(err: unknown): string {
 }
 
 /**
- * Strip Convex's framing (`[CONVEX ...]`, `Server Error`, `Uncaught XyzError:`)
- * and the stack trace, leaving the message the server actually threw.
+ * Strip Convex's framing (`[CONVEX ...]`, `Server Error`, `Uncaught XyzError:`,
+ * the trailing `Called by client`) and the stack trace, leaving the message the
+ * server actually threw.
+ *
+ * Returns `""` when nothing survives, which is the normal case for a plain
+ * `Error` thrown on a production deployment: the message is stripped server-side
+ * and all that reaches us is framing. Callers must treat empty as "no
+ * information" and use their own fallback — returning the framing itself put
+ * "Called by client" in front of users on the deployed site.
  */
 function stripConvexFraming(raw: string): string {
   const meaningful = raw
@@ -135,13 +142,18 @@ function stripConvexFraming(raw: string): string {
         !/^\[CONVEX\b/.test(line) &&
         !/^\[Request ID:/.test(line) &&
         line !== "Server Error" &&
-        line !== "Uncaught Error",
+        line !== "Uncaught Error" &&
+        // Appended by the client when an action or mutation rejects. It describes
+        // the call site, not the failure, and is never worth showing.
+        line !== "Called by client",
     );
 
-  const first = meaningful[0] ?? raw.trim();
-  // "Uncaught ApiError: ROOM_EXPIRED: Room has expired" -> the rest.
+  const first = meaningful[0];
+  if (first === undefined) return "";
   return first.replace(/^Uncaught\s+\w*Error:\s*/i, "").trim();
 }
+
+const GENERIC_MESSAGE = "Something went wrong. Please try again.";
 
 /**
  * Pull the structured `CODE: message` out of a Convex error, preferring our own
@@ -150,10 +162,16 @@ function stripConvexFraming(raw: string): string {
 export function parseApiError(err: unknown): ApiErrorInfo {
   const raw = rawMessage(err);
   if (!raw) {
-    return { code: "UNKNOWN", message: "Something went wrong. Please try again." };
+    return { code: "UNKNOWN", message: GENERIC_MESSAGE };
   }
 
   const cleaned = stripConvexFraming(raw);
+  // Framing only — a production deployment stripped the real message. There is
+  // nothing here worth showing.
+  if (!cleaned) {
+    return { code: "UNKNOWN", message: GENERIC_MESSAGE };
+  }
+
   const match = cleaned.match(/\b([A-Z][A-Z0-9_]{2,})\s*:\s*(.+)$/);
 
   if (match) {
@@ -181,6 +199,11 @@ export function parseAuthError(err: unknown, fallback: string): string {
   for (const [pattern, patternMessage] of AUTH_ERROR_PATTERNS) {
     if (pattern.test(raw)) return patternMessage;
   }
+
+  // Nothing survived stripping, so the caller's fallback is strictly better than
+  // ours: it knows which step failed and can say "that code isn't right" rather
+  // than "something went wrong".
+  if (message === GENERIC_MESSAGE) return fallback;
 
   // Anything left that still looks like machine output isn't worth showing.
   if (!message || message.length > 200 || /\{|\}|\bat\s+\S+:\d+/.test(message)) {

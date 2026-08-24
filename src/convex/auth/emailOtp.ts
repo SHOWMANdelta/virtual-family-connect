@@ -4,6 +4,7 @@ import type { DataModel } from "../_generated/dataModel";
 import { internal } from "../_generated/api";
 import { EmailDeliveryError, sendEmail } from "../emailDelivery";
 import { renderOtpEmail } from "../emailTemplates";
+import { ApiError } from "../errors";
 
 const EXPIRY_MINUTES = 15;
 const CODE_LENGTH = 6;
@@ -62,8 +63,9 @@ export const emailOtp = Email({
     } else {
       // Never expected. Fail loudly rather than silently dropping the limit —
       // an unthrottled public mailer is worse than a broken sign-in button.
-      throw new Error(
-        "OTP_SEND_FAILED: Sign-in is misconfigured on this server (no request context).",
+      throw new ApiError(
+        "OTP_SEND_FAILED",
+        "Sign-in is misconfigured on this server (no request context).",
       );
     }
 
@@ -96,7 +98,7 @@ export const emailOtp = Email({
       // the sentence the user reads.
       const code =
         error instanceof EmailDeliveryError ? error.code : "EMAIL_SEND_FAILED";
-      throw new Error(`${code}: We couldn't send your sign-in code.`);
+      throw new ApiError(code, "We couldn't send your sign-in code.");
     }
   },
 });
