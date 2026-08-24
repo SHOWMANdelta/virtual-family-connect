@@ -1,8 +1,85 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
+import type { MutationCtx } from "./_generated/server";
 import { getCurrentUser } from "./users";
-import type { Doc } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { throwErr } from "./errors";
+
+/**
+ * Load a room and assert it can still be joined.
+ *
+ * Flips `isActive` off as a side effect when a room has passed its `endTime`, so
+ * an expired room stops showing up in listings. Shared by `joinRoom` and by the
+ * invite flow in ./invites so the rules can't drift apart.
+ */
+export async function assertRoomJoinable(
+  ctx: MutationCtx,
+  roomId: Id<"rooms">,
+): Promise<Doc<"rooms">> {
+  const room = await ctx.db.get(roomId);
+  if (!room) {
+    throwErr("ROOM_NOT_FOUND", "Room does not exist", 404);
+  }
+
+  if (room!.endTime && Date.now() > room!.endTime) {
+    if (room!.isActive) {
+      await ctx.db.patch(room!._id, { isActive: false });
+    }
+    throwErr("ROOM_EXPIRED", "Room has expired", 410);
+  }
+
+  if (!room!.isActive) {
+    throwErr("ROOM_INACTIVE", "Cannot join an inactive room", 403);
+  }
+
+  return room!;
+}
+
+/**
+ * Add a user to a room as a participant, honouring capacity. Idempotent: an
+ * existing active membership is returned rather than duplicated.
+ */
+export async function addParticipantToRoom(
+  ctx: MutationCtx,
+  roomId: Id<"rooms">,
+  userId: Id<"users">,
+  isHost = false,
+): Promise<Id<"roomParticipants">> {
+  const existing = await ctx.db
+    .query("roomParticipants")
+    .withIndex("by_room_and_user", (q) =>
+      q.eq("roomId", roomId).eq("userId", userId),
+    )
+    .filter((q) => q.eq(q.field("leftAt"), undefined))
+    .first();
+
+  if (existing) {
+    return existing._id;
+  }
+
+  const room = await ctx.db.get(roomId);
+  const currentParticipants = await ctx.db
+    .query("roomParticipants")
+    .withIndex("by_room", (q) => q.eq("roomId", roomId))
+    .filter((q) => q.eq(q.field("leftAt"), undefined))
+    .collect();
+
+  if (room && currentParticipants.length >= room.maxParticipants) {
+    throwErr("ROOM_AT_CAPACITY", "Room is at capacity", 409);
+  }
+
+  return await ctx.db.insert("roomParticipants", {
+    roomId,
+    userId,
+    joinedAt: Date.now(),
+    isHost,
+    permissions: {
+      canShare: isHost,
+      canMute: isHost,
+      canRecord: isHost,
+    },
+  });
+}
 
 export const createRoom = mutation({
   args: {
@@ -75,58 +152,8 @@ export const joinRoom = mutation({
       throwErr("AUTH_REQUIRED", "Must be authenticated to join a room", 401);
     }
 
-    const room = await ctx.db.get(args.roomId);
-    if (!room) {
-      throwErr("ROOM_NOT_FOUND", "Room does not exist", 404);
-    }
-
-    // Add: Expiry enforcement before any other checks
-    if (room!.endTime && Date.now() > room!.endTime) {
-      if (room!.isActive) {
-        await ctx.db.patch(room!._id, { isActive: false });
-      }
-      throwErr("ROOM_EXPIRED", "Room has expired", 410);
-    }
-
-    if (!room!.isActive) {
-      throwErr("ROOM_INACTIVE", "Cannot join an inactive room", 403);
-    }
-
-    const existing = await ctx.db
-      .query("roomParticipants")
-      .withIndex("by_room_and_user", (q) =>
-        q.eq("roomId", args.roomId).eq("userId", user!._id)
-      )
-      .filter((q) => q.eq(q.field("leftAt"), undefined))
-      .first();
-
-    if (existing) {
-      return existing._id;
-    }
-
-    const currentParticipants = await ctx.db
-      .query("roomParticipants")
-      .withIndex("by_room", (q) => q.eq("roomId", args.roomId))
-      .filter((q) => q.eq(q.field("leftAt"), undefined))
-      .collect();
-
-    if (currentParticipants.length >= room!.maxParticipants) {
-      throwErr("ROOM_AT_CAPACITY", "Room is at capacity", 409);
-    }
-
-    const participantId = await ctx.db.insert("roomParticipants", {
-      roomId: args.roomId,
-      userId: user!._id,
-      joinedAt: Date.now(),
-      isHost: false,
-      permissions: {
-        canShare: false,
-        canMute: false,
-        canRecord: false,
-      },
-    });
-
-    return participantId;
+    await assertRoomJoinable(ctx, args.roomId);
+    return await addParticipantToRoom(ctx, args.roomId, user!._id);
   },
 });
 
@@ -230,69 +257,10 @@ export const getRoom = query({
   },
 });
 
-export const inviteUserToRoom = mutation({
-  args: {
-    roomId: v.id("rooms"),
-    email: v.string(),
-  },
-  handler: async (ctx, args) => {
-    const requester = await getCurrentUser(ctx);
-    if (!requester) {
-      throwErr("AUTH_REQUIRED", "Must be authenticated to invite", 401);
-    }
-
-    const room = await ctx.db.get(args.roomId);
-    if (!room) throwErr("ROOM_NOT_FOUND", "Room not found", 404);
-
-    // Enforce expiry/inactive
-    if (room!.endTime && Date.now() > room!.endTime) {
-      if (room!.isActive) await ctx.db.patch(room!._id, { isActive: false });
-      throwErr("ROOM_EXPIRED", "Room has expired", 410);
-    }
-    if (!room!.isActive) throwErr("ROOM_INACTIVE", "Room is inactive", 403);
-
-    const email = args.email.trim().toLowerCase();
-    if (!email || !email.includes("@")) {
-      throwErr("INVALID_EMAIL", "Email must be valid", 400);
-    }
-
-    const recipient = await ctx.db
-      .query("users")
-      .withIndex("email", (q) => q.eq("email", email))
-      .first();
-
-    if (!recipient) {
-      throwErr("USER_NOT_FOUND", "No user exists with that email", 404);
-    }
-
-    if (recipient!._id === requester!._id) {
-      throwErr("CANNOT_INVITE_SELF", "You cannot invite yourself", 400);
-    }
-
-    // Capacity check (only active participants)
-    const activeParticipants = await ctx.db
-      .query("roomParticipants")
-      .withIndex("by_room", (q) => q.eq("roomId", args.roomId))
-      .filter((q) => q.eq(q.field("leftAt"), undefined))
-      .collect();
-
-    if (activeParticipants.length >= room!.maxParticipants) {
-      throwErr("ROOM_AT_CAPACITY", "Room is at capacity", 409);
-    }
-
-    // Send in-app notification
-    await ctx.db.insert("notifications", {
-      recipientId: recipient!._id,
-      senderId: requester!._id,
-      type: "call",
-      title: `You're invited to join: ${room!.name}`,
-      body: "Tap to join the ongoing call.",
-      roomId: room!._id,
-      read: false,
-      createdAt: Date.now(),
-    });
-  },
-});
+// Inviting someone to a room now lives in ./invites (`invites.sendRoomInvite`).
+// The old `inviteUserToRoom` only wrote an in-app notification and rejected any
+// address that wasn't already registered, which made emailed invitations
+// impossible. See src/convex/invites.ts.
 
 export const getRoomHealth = query({
   args: {

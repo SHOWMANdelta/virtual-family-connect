@@ -2,6 +2,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { InstrumentationProvider } from "@/instrumentation";
 import AuthPage from "@/pages/Auth";
 import Dashboard from "@/pages/Dashboard";
+import JoinInvite from "@/pages/JoinInvite";
 import VideoRoom from "@/pages/VideoRoom";
 import { ConvexAuthProvider } from "@convex-dev/auth/react";
 import { ConvexReactClient } from "convex/react";
@@ -47,6 +48,7 @@ createRoot(document.getElementById("root")!).render(
           <Routes>
             <Route path="/" element={<Landing />} />
             <Route path="/auth" element={<AuthPage redirectAfterAuth="/dashboard" />} />
+            <Route path="/join/:token" element={<JoinInvite />} />
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/room/:roomId" element={<VideoRoom />} />
             <Route path="*" element={<NotFound />} />

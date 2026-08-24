@@ -54,6 +54,17 @@ crons.interval(
   { thresholdMs: 30_000 },
 );
 
+// Rate-limit buckets are keyed by whatever address an anonymous caller typed
+// into the sign-in box, so they accumulate indefinitely without this. Hourly is
+// plenty — the cutoff already sits past the longest window, so a delayed sweep
+// only means rows linger, never that a limit stops being enforced.
+crons.interval(
+  "cleanup elapsed rate limit windows",
+  { hours: 1 },
+  internal.rateLimit.deleteElapsedWindows,
+  {},
+);
+
 export default crons;
 // Only re-export the mutation
 export { deleteExpiredCallInvites };

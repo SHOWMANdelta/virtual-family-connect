@@ -1,6 +1,12 @@
 {
   "compilerOptions": {
-    "composite": true,
+    // This project is only ever typechecked — Vite does the actual compiling.
+    // Without `noEmit`, `tsc -b` wrote a .js and .d.ts next to every source
+    // file, and those stray .js files then broke the Convex bundler ("Two
+    // output files share the same path"). `composite` is deliberately absent:
+    // nothing references this project, and it forbids `noEmit`.
+    "noEmit": true,
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.tsbuildinfo",
     "target": "ES2022",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "module": "ESNext",

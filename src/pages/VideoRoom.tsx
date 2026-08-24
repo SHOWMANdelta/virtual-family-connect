@@ -4,6 +4,7 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/hooks/use-auth";
+import { parseApiError } from "@/lib/errors";
 import { api } from "@/convex/_generated/api";
 import { useQuery, useMutation } from "convex/react";
 import { motion } from "framer-motion";
@@ -47,7 +48,20 @@ export default function VideoRoom() {
   const [permissionDetail, setPermissionDetail] = useState<string>("");
   const [showInvite, setShowInvite] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteNote, setInviteNote] = useState("");
   const [inviting, setInviting] = useState(false);
+  const [inviteError, setInviteError] = useState<string | null>(null);
+  /**
+   * The invitation just created, so the dialog can show its link and live
+   * delivery status. Creating the row and delivering the email are two separate
+   * steps — the mutation only schedules the send — so the UI has to wait for the
+   * outcome rather than claim success the moment the mutation returns.
+   */
+  const [sentInvite, setSentInvite] = useState<{
+    id: string;
+    email: string;
+    joinUrl: string;
+  } | null>(null);
   // Add: API error state for backend failures
   const [apiError, setApiError] = useState<{ code: string; message: string } | null>(null);
   
@@ -82,11 +96,8 @@ export default function VideoRoom() {
   };
 
   // Helper: parse structured API errors "CODE: message"
-  const parseApiErrorMsg = (err: unknown): { code: string; message: string } => {
-    const raw = err instanceof Error ? err.message : String(err);
-    const m = raw.match(/^([A-Z_]+):\s*(.*)$/);
-    return { code: m?.[1] || "UNKNOWN", message: m?.[2] || raw };
-  };
+  // Shared with the auth + invite pages so Convex's multi-line error framing is
+  // stripped consistently (see src/lib/errors.ts).
 
   // Retry joining the room if a backend error occurred
   const retryJoin = async () => {
@@ -96,7 +107,7 @@ export default function VideoRoom() {
       toast.success("Joined room");
       setApiError(null);
     } catch (e) {
-      const { code, message } = parseApiErrorMsg(e);
+      const { code, message } = parseApiError(e);
       setApiError({ code, message });
       toast.error(`${code}: ${message}`);
     }
@@ -129,7 +140,18 @@ export default function VideoRoom() {
   const leaveRoom = useMutation(api.rooms.leaveRoom);
   const sendMessage = useMutation(api.messages.sendMessage);
   const joinRoom = useMutation(api.rooms.joinRoom);
-  const inviteUser = useMutation(api.rooms.inviteUserToRoom);
+  const inviteUser = useMutation(api.invites.sendRoomInvite);
+
+  // Live delivery status for invitations, so the dialog can report what actually
+  // happened to the email rather than assuming it arrived. Only subscribed while
+  // the dialog is showing a result.
+  const roomInvites = useQuery(
+    api.invites.listRoomInvites,
+    roomId && sentInvite ? { roomId: roomId as any } : "skip",
+  );
+  const sentInviteStatus = sentInvite
+    ? roomInvites?.find((invite) => invite._id === sentInvite.id)
+    : undefined;
 
   // WebRTC: peer connections and streams
   const peerConnectionsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
@@ -517,7 +539,7 @@ export default function VideoRoom() {
       try {
         await joinRoom({ roomId: roomId as any });
       } catch (e) {
-        const { code, message } = parseApiErrorMsg(e);
+        const { code, message } = parseApiError(e);
         setApiError({ code, message });
         console.error("Failed to join room", e);
         toast.error(`${code}: ${message}`);
@@ -1169,7 +1191,7 @@ export default function VideoRoom() {
       });
       setMessage("");
     } catch (error) {
-      const { code, message } = parseApiErrorMsg(error);
+      const { code, message } = parseApiError(error);
       toast.error(`${code}: ${message}`);
     }
   };
@@ -1198,17 +1220,61 @@ export default function VideoRoom() {
   const handleInvite = async () => {
     if (!roomId || !inviteEmail.trim()) return;
     setInviting(true);
+    setInviteError(null);
     try {
-      await inviteUser({ roomId: roomId as any, email: inviteEmail.trim() });
-      toast.success("Invitation sent");
+      const result = await inviteUser({
+        roomId: roomId as any,
+        email: inviteEmail.trim(),
+        note: inviteNote.trim() || undefined,
+        // Only used as a local-dev fallback; the server prefers SITE_URL.
+        origin: window.location.origin,
+      });
+
+      // Deliberately not "Invitation emailed to X" — at this point the row exists
+      // and the send is queued, nothing more. The dialog now shows the real
+      // outcome as it lands, along with the link to share by hand if it doesn't.
+      setSentInvite({
+        id: result.inviteId,
+        email: result.email,
+        joinUrl: result.joinUrl,
+      });
       setInviteEmail("");
-      setShowInvite(false);
-    } catch (e: any) {
-      const { code, message } = parseApiErrorMsg(e);
-      toast.error(`${code}: ${message}`);
+      setInviteNote("");
+    } catch (e) {
+      const { message } = parseApiError(e);
+      setInviteError(message);
     } finally {
       setInviting(false);
     }
+  };
+
+  const copyInviteLink = async (url: string) => {
+    try {
+      await navigator.clipboard.writeText(url);
+      toast.success("Invite link copied");
+    } catch {
+      // Same clipboard-blocked fallback the share button uses.
+      try {
+        const textarea = document.createElement("textarea");
+        textarea.value = url;
+        textarea.style.position = "fixed";
+        textarea.style.opacity = "0";
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand("copy");
+        document.body.removeChild(textarea);
+        toast.success("Invite link copied");
+      } catch {
+        toast.error("Couldn't copy — select the link and copy it manually");
+      }
+    }
+  };
+
+  const resetInviteDialog = () => {
+    setSentInvite(null);
+    setInviteError(null);
+    setInviteEmail("");
+    setInviteNote("");
   };
 
   const getInitials = (name?: string, email?: string) => {
@@ -1568,42 +1634,166 @@ export default function VideoRoom() {
         </div>
       )}
 
-      <Dialog open={showInvite} onOpenChange={setShowInvite}>
+      <Dialog
+        open={showInvite}
+        onOpenChange={(open) => {
+          setShowInvite(open);
+          if (!open) resetInviteDialog();
+        }}
+      >
         <DialogContent className="bg-gray-800 text-white border border-gray-700 rounded-2xl shadow-xl data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 duration-200">
           <DialogHeader>
-            <DialogTitle>Invite a member</DialogTitle>
+            <DialogTitle>
+              {sentInvite ? "Invitation created" : "Invite someone to this call"}
+            </DialogTitle>
           </DialogHeader>
-          <div className="space-y-3">
-            <div className="space-y-2">
-              <Label htmlFor="inviteEmail" className="text-gray-300">Email</Label>
-              <Input
-                id="inviteEmail"
-                type="email"
-                placeholder="user@example.com"
-                value={inviteEmail}
-                onChange={(e) => setInviteEmail(e.target.value)}
-                className="bg-gray-700 border-gray-600 text-white placeholder-gray-400"
-              />
+
+          {sentInvite ? (
+            <div className="space-y-4">
+              <p className="text-sm text-gray-300">
+                Invitation for{" "}
+                <span className="font-medium text-white">{sentInvite.email}</span>.
+              </p>
+
+              {/* Delivery outcome. `emailDelivered` is undefined until the send
+                  action reports back, so that state is "in progress", not
+                  "failed". */}
+              {sentInviteStatus?.emailDelivered === true ? (
+                <div className="rounded-lg border border-green-700/60 bg-green-950/40 p-3">
+                  <p className="text-sm font-medium text-green-300">
+                    Email sent.
+                  </p>
+                  <p className="mt-1 text-xs text-green-200/80">
+                    The link takes them straight into this call — no account
+                    needed.
+                  </p>
+                </div>
+              ) : sentInviteStatus?.emailDelivered === false ? (
+                <div className="rounded-lg border border-amber-700/60 bg-amber-950/40 p-3">
+                  <p className="text-sm font-medium text-amber-300">
+                    The email didn't go out.
+                  </p>
+                  <p className="mt-1 text-xs text-amber-200/80">
+                    {sentInviteStatus.emailError ??
+                      "Delivery failed. Share the link below instead."}
+                  </p>
+                </div>
+              ) : (
+                <div className="rounded-lg border border-gray-700 bg-gray-900/60 p-3">
+                  <p className="flex items-center gap-2 text-sm text-gray-300">
+                    <RefreshCcw className="h-3.5 w-3.5 animate-spin" />
+                    Sending the email…
+                  </p>
+                </div>
+              )}
+
+              {/* Always available, whatever happened to the email: the link is
+                  the invitation, and the row is valid either way. */}
+              <div className="space-y-2">
+                <Label className="text-gray-300">Invite link</Label>
+                <div className="flex gap-2">
+                  <Input
+                    readOnly
+                    value={sentInvite.joinUrl}
+                    onFocus={(e) => e.currentTarget.select()}
+                    className="bg-gray-700 border-gray-600 text-white font-mono text-xs"
+                  />
+                  <Button
+                    variant="outline"
+                    className="shrink-0 border-gray-600 bg-gray-700 text-white hover:bg-gray-600"
+                    onClick={() => void copyInviteLink(sentInvite.joinUrl)}
+                  >
+                    Copy
+                  </Button>
+                </div>
+                <p className="text-xs text-gray-400">
+                  Single-use, and expires with this call. Treat it like a key to
+                  the room.
+                </p>
+              </div>
             </div>
-            <p className="text-xs text-gray-400">
-              The user will receive an in-app notification to join this call.
-            </p>
-          </div>
+          ) : (
+            <div className="space-y-3">
+              <div className="space-y-2">
+                <Label htmlFor="inviteEmail" className="text-gray-300">Email address</Label>
+                <Input
+                  id="inviteEmail"
+                  type="email"
+                  inputMode="email"
+                  autoComplete="email"
+                  placeholder="user@example.com"
+                  value={inviteEmail}
+                  onChange={(e) => {
+                    setInviteEmail(e.target.value);
+                    if (inviteError) setInviteError(null);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && inviteEmail.trim() && !inviting) {
+                      void handleInvite();
+                    }
+                  }}
+                  className="bg-gray-700 border-gray-600 text-white placeholder-gray-400"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="inviteNote" className="text-gray-300">
+                  Add a note <span className="text-gray-500">(optional)</span>
+                </Label>
+                <Input
+                  id="inviteNote"
+                  placeholder="Joining for Dad's check-up"
+                  value={inviteNote}
+                  onChange={(e) => setInviteNote(e.target.value)}
+                  maxLength={200}
+                  className="bg-gray-700 border-gray-600 text-white placeholder-gray-400"
+                />
+              </div>
+              <p className="text-xs text-gray-400">
+                We'll email them a link that opens this call directly. They don't need
+                an account — they can join as a guest.
+              </p>
+              {inviteError && (
+                <p className="text-sm text-red-400">{inviteError}</p>
+              )}
+            </div>
+          )}
+
           <DialogFooter>
-            <Button
-              variant="ghost"
-              className="text-gray-300 hover:text-white"
-              onClick={() => setShowInvite(false)}
-            >
-              Cancel
-            </Button>
-            <Button
-              onClick={handleInvite}
-              disabled={!inviteEmail.trim() || inviting}
-              className="bg-blue-600 hover:bg-blue-700"
-            >
-              {inviting ? "Inviting..." : "Send Invite"}
-            </Button>
+            {sentInvite ? (
+              <>
+                <Button
+                  variant="ghost"
+                  className="text-gray-300 hover:text-white"
+                  onClick={resetInviteDialog}
+                >
+                  Invite someone else
+                </Button>
+                <Button
+                  onClick={() => setShowInvite(false)}
+                  className="bg-blue-600 hover:bg-blue-700"
+                >
+                  Done
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button
+                  variant="ghost"
+                  className="text-gray-300 hover:text-white"
+                  onClick={() => setShowInvite(false)}
+                  disabled={inviting}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={handleInvite}
+                  disabled={!inviteEmail.trim() || inviting}
+                  className="bg-blue-600 hover:bg-blue-700"
+                >
+                  {inviting ? "Sending..." : "Send invitation"}
+                </Button>
+              </>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>

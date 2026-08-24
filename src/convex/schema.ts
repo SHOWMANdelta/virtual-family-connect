@@ -75,6 +75,53 @@ const schema = defineSchema(
       .index("by_user", ["userId"])
       .index("by_room_and_user", ["roomId", "userId"]),
 
+    // Email invitations to a specific room. A row is created for every invite so
+    // the token in the emailed link can be resolved without the recipient being
+    // signed in (or even registered) yet.
+    roomInvites: defineTable({
+      roomId: v.id("rooms"),
+      invitedEmail: v.string(), // always stored lower-cased
+      invitedBy: v.id("users"),
+      token: v.string(), // random, url-safe; the secret in the join link
+      status: v.union(
+        v.literal("pending"),
+        v.literal("accepted"),
+        v.literal("revoked"),
+      ),
+      note: v.optional(v.string()), // optional personal message in the email
+      createdAt: v.number(),
+      expiresAt: v.number(),
+      acceptedAt: v.optional(v.number()),
+      acceptedBy: v.optional(v.id("users")),
+      emailDelivered: v.optional(v.boolean()), // false when no mail key is set
+      emailError: v.optional(v.string()),
+    }).index("by_token", ["token"])
+      .index("by_room", ["roomId"])
+      .index("by_email", ["invitedEmail"])
+      .index("by_room_and_email", ["roomId", "invitedEmail"]),
+
+    // Fixed-window counters guarding anything that spends real money or real
+    // sending reputation. `signIn` is a public unauthenticated endpoint, so
+    // without this a loop could mail-bomb a stranger from our verified domain
+    // (getting it blocklisted) or burn the whole daily email quota, which takes
+    // sign-in down for everyone. The client-side cooldown is UX only — anyone
+    // can call the Convex endpoint directly.
+    //
+    // `key` namespaces the bucket, e.g. "otp:someone@example.com" for the
+    // per-address limit and "otp:__all__" for the deployment-wide ceiling.
+    //
+    // Every distinct address ever typed into the sign-in box leaves a row here,
+    // and anonymous callers decide what those addresses are — so `by_window`
+    // exists to let a cron sweep elapsed buckets instead of accumulating them
+    // forever. See crons.ts.
+    rateLimits: defineTable({
+      key: v.string(),
+      windowStartedAt: v.number(),
+      count: v.number(),
+    })
+      .index("by_key", ["key"])
+      .index("by_window", ["windowStartedAt"]),
+
     // Patient-Relative connections
     connections: defineTable({
       patientId: v.id("users"),
