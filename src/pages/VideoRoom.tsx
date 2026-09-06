@@ -68,6 +68,9 @@ export default function VideoRoom() {
   // Add: main video health state
   const [mainVideoReady, setMainVideoReady] = useState(false);
   const [mainVideoError, setMainVideoError] = useState<string | null>(null);
+  const [selectedPeerId, setSelectedPeerId] = useState<string | null>(null);
+  const [isLocalMediaReady, setIsLocalMediaReady] = useState(false);
+  const localMediaPromiseRef = useRef<Promise<MediaStream | null> | null>(null);
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
@@ -173,8 +176,30 @@ export default function VideoRoom() {
 
   const rtcConfig: RTCConfiguration = {
     iceServers: [
-      { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] },
+      { urls: "stun:stun.l.google.com:19302" },
+      { urls: "stun:stun1.l.google.com:19302" },
+      { urls: "stun:stun2.l.google.com:19302" },
+      { urls: "stun:stun3.l.google.com:19302" },
+      { urls: "stun:stun4.l.google.com:19302" },
+      { urls: "stun:global.stun.twilio.com:3478" },
+      ...(() => {
+        try {
+          const custom = (import.meta as any).env?.VITE_ICE_SERVERS;
+          if (!custom) return [];
+          if (custom.startsWith("[")) return JSON.parse(custom);
+          return custom.split(",").map((u: string) => ({ urls: u.trim() }));
+        } catch {
+          return [];
+        }
+      })(),
     ],
+    iceCandidatePoolSize: 10,
+  };
+
+  // Helper: deterministic caller (higher ID makes offer) to completely prevent glare collisions
+  const isCallerFor = (peerUserId: string) => {
+    if (!user?._id) return false;
+    return String((user as any)._id) > String(peerUserId);
   };
 
   // Helper: establish polite role to resolve glare deterministically
@@ -185,31 +210,20 @@ export default function VideoRoom() {
 
   const ensurePeerConnection = (peerUserId: string) => {
     let pc = peerConnectionsRef.current.get(peerUserId);
-    if (pc) return pc;
+    if (pc && pc.signalingState !== "closed") return pc;
+    if (pc) {
+      try {
+        pc.close();
+      } catch {}
+    }
 
     pc = new RTCPeerConnection(rtcConfig);
 
-    // If local media isn't ready yet, proactively add recvonly transceivers
-    // so we can still receive remote tracks immediately.
-    if (!localStreamRef.current) {
-      try {
-        pc.addTransceiver("video", { direction: "recvonly" });
-        pc.addTransceiver("audio", { direction: "recvonly" });
-      } catch (e) {
-        console.warn("Failed to add recvonly transceivers", e);
-      }
-    }
-
-    // Add local tracks
-    if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach((track) => {
-        pc!.addTrack(track, localStreamRef.current as MediaStream);
-      });
-    }
+    // Proactively attach local tracks if already available
+    attachLocalTracksToPc(pc);
 
     // When remote track arrives: handle browsers that don't populate event.streams
     pc.ontrack = (event) => {
-      // Create or reuse a media stream container for this peer
       let stream = remoteStreamsRef.current.get(peerUserId);
       if (!stream) {
         stream = new MediaStream();
@@ -265,15 +279,6 @@ export default function VideoRoom() {
           });
         } catch (e) {
           console.error("Failed to send ICE candidate", e);
-          const key = `${peerUserId}:signal:candidate:sendfail`;
-          if (!connectionAlertsRef.current.has(key)) {
-            connectionAlertsRef.current.add(key);
-            toast.warning(
-              `Network signal issue while sending connection info to ${getDisplayName(
-                peerUserId
-              )}. If this persists, check VPN/firewall and try switching networks.`
-            );
-          }
         }
       }
     };
@@ -283,55 +288,44 @@ export default function VideoRoom() {
       try {
         const code = event?.errorCode;
         const text = event?.errorText;
-        const url = event?.url;
+        const url = event?.url || event?.urlCandidate;
         const host = event?.hostCandidate;
-        const srv = event?.url || event?.urlCandidate;
-        const details = [url || srv, host].filter(Boolean).join(" • ");
+        const details = [url, host].filter(Boolean).join(" • ");
         const key = `${peerUserId}:icecandidateerror:${code}:${host || ""}`;
         if (!connectionAlertsRef.current.has(key)) {
           connectionAlertsRef.current.add(key);
-          toast.error(
-            `Connection routing error with ${getDisplayName(
-              peerUserId
-            )}${code ? ` (code ${code})` : ""}. ${
-              text ? text + ". " : ""
-            }Try disabling VPN, allowing WebRTC in your firewall, or switching networks.${details ? ` [${details}]` : ""}`
-          );
+          console.warn(`ICE candidate issue with ${getDisplayName(peerUserId)}: ${text || code} [${details}]`);
         }
       } catch (err) {
         console.warn("onicecandidateerror handling failed", err);
       }
     };
 
-    // Override ICE connection state handler with recovery logic to avoid stale/overridden assignments
+    // ICE connection state handler with recovery logic
     pc.oniceconnectionstatechange = () => {
-      if (pc.iceConnectionState === "failed" || pc.iceConnectionState === "disconnected") {
-        const key = `${peerUserId}:ice:${pc.iceConnectionState}`;
+      const state = pc?.iceConnectionState;
+      if (state === "connected" || state === "completed") {
+        setMainVideoReady(true);
+        setMainVideoError(null);
+        toastOnce(`${peerUserId}:connected`, () => {
+          toast.success(`Connected with ${getDisplayName(peerUserId)}`);
+        });
+      } else if (state === "failed" || state === "disconnected") {
+        const key = `${peerUserId}:ice:${state}`;
         if (!connectionAlertsRef.current.has(key)) {
           connectionAlertsRef.current.add(key);
-          toast.warning(
-            pc.iceConnectionState === "failed"
-              ? `Couldn't establish a stable path to ${getDisplayName(
-                  peerUserId
-                )}. Tips: disable VPN, check firewall, ensure both sides use HTTPS, or switch networks/Wi‑Fi bands.`
-              : `Connection to ${getDisplayName(
-                  peerUserId
-                )} looks unstable. Checking routes and attempting to recover...`
-          );
+          if (state === "failed") {
+            toast.warning(`Connection with ${getDisplayName(peerUserId)} was interrupted. Attempting to recover...`);
+          }
         }
 
-        // Debounced ICE restart + gentle renegotiation
+        // Debounced ICE restart + gentle renegotiation for caller
         const prev = iceRestartTimersRef.current.get(peerUserId);
         if (prev) clearTimeout(prev);
         const t = window.setTimeout(async () => {
           try {
-            // Try ICE restart (supported in modern browsers)
-            if (typeof pc.restartIce === "function") {
-              pc.restartIce();
-            }
-            // If stable, send a fresh offer to re-sync routes
-            if (pc.signalingState === "stable") {
-              await createOfferTo(peerUserId);
+            if (isCallerFor(peerUserId) && pc.signalingState === "stable") {
+              await createOfferTo(peerUserId, true);
             }
           } catch (e) {
             console.warn("ICE restart/renegotiation attempt failed", e);
@@ -341,69 +335,9 @@ export default function VideoRoom() {
         }, 3000);
         iceRestartTimersRef.current.set(peerUserId, t);
       }
+      forceRender((n) => n + 1);
     };
 
-    // Surface ICE candidate errors with diagnostics
-    pc.onicecandidateerror = (event: any) => {
-      try {
-        const code = event?.errorCode;
-        const text = event?.errorText;
-        const url = event?.url;
-        const host = event?.hostCandidate;
-        const srv = event?.url || event?.urlCandidate;
-        const details = [url || srv, host].filter(Boolean).join(" • ");
-        const key = `${peerUserId}:icecandidateerror:${code}:${host || ""}`;
-        if (!connectionAlertsRef.current.has(key)) {
-          connectionAlertsRef.current.add(key);
-          toast.error(
-            `Connection routing error with ${getDisplayName(
-              peerUserId
-            )}${code ? ` (code ${code})` : ""}. ${
-              text ? text + ". " : ""
-            }Try disabling VPN, allowing WebRTC in your firewall, or switching networks.${details ? ` [${details}]` : ""}`
-          );
-        }
-      } catch (err) {
-        console.warn("onicecandidateerror handling failed", err);
-      }
-    };
-
-    // NEW: auto-renegotiate when local tracks change or transceivers are added
-    pc.onnegotiationneeded = () => {
-      // Debounce and guard
-      const stable = pc.signalingState === "stable";
-      if (!stable) return;
-      createOfferTo(peerUserId);
-    };
-
-    // NEW: observe ICE gathering; warn if it takes too long
-    pc.onicegatheringstatechange = () => {
-      // Clear stale timer if any
-      const oldTimer = iceGatheringTimersRef.current.get(peerUserId);
-      if (oldTimer) {
-        clearTimeout(oldTimer);
-        iceGatheringTimersRef.current.delete(peerUserId);
-      }
-
-      if (pc.iceGatheringState === "gathering") {
-        const timer = window.setTimeout(() => {
-          toast.warning(
-            `Finding network routes to ${getDisplayName(peerUserId)} is taking longer than usual. We'll keep trying in the background. If it persists, check VPN/firewall or switch networks.`
-          );
-          iceGatheringTimersRef.current.delete(peerUserId);
-        }, 20000); // increase threshold to reduce noise
-        iceGatheringTimersRef.current.set(peerUserId, timer);
-      }
-      if (pc.iceGatheringState === "complete") {
-        const t = iceGatheringTimersRef.current.get(peerUserId);
-        if (t) {
-          clearTimeout(t);
-          iceGatheringTimersRef.current.delete(peerUserId);
-        }
-      }
-    };
-
-    // NEW: basic signaling state observer for cleanup
     pc.onsignalingstatechange = () => {
       if (pc.signalingState === "closed") {
         const iceTimer = iceGatheringTimersRef.current.get(peerUserId);
@@ -423,13 +357,19 @@ export default function VideoRoom() {
     return pc;
   };
 
-  const createOfferTo = async (peerUserId: string) => {
+  const createOfferTo = async (peerUserId: string, iceRestart = false) => {
     if (!roomId || !user?._id) return;
+
+    // Await local media if still initializing so offer always includes local audio and video tracks
+    if (!localStreamRef.current && localMediaPromiseRef.current) {
+      await localMediaPromiseRef.current.catch(() => {});
+    }
+
     const pc = ensurePeerConnection(peerUserId);
     attachLocalTracksToPc(pc);
 
     // Guard against concurrent offers and invalid states
-    if (pc.signalingState !== "stable") {
+    if (pc.signalingState !== "stable" && !iceRestart) {
       return;
     }
     if (makingOfferRef.current.get(peerUserId)) {
@@ -437,7 +377,11 @@ export default function VideoRoom() {
     }
     try {
       makingOfferRef.current.set(peerUserId, true);
-      const offer = await pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true });
+      const offer = await pc.createOffer({
+        offerToReceiveAudio: true,
+        offerToReceiveVideo: true,
+        iceRestart,
+      });
       await pc.setLocalDescription(offer);
       await sendSignal({
         roomId: roomId as any,
@@ -456,19 +400,25 @@ export default function VideoRoom() {
     }
   };
 
-  // Helper to add local tracks to an existing RTCPeerConnection (if not already added)
+  // Helper to add local tracks to an existing RTCPeerConnection (or update if track changed)
   const attachLocalTracksToPc = (pc: RTCPeerConnection) => {
     if (!localStreamRef.current) return;
     const senders = pc.getSenders();
-    const haveVideo = senders.some((s) => s.track && s.track.kind === "video");
-    const haveAudio = senders.some((s) => s.track && s.track.kind === "audio");
 
     localStreamRef.current.getTracks().forEach((track) => {
-      if (track.kind === "video" && !haveVideo) {
-        pc.addTrack(track, localStreamRef.current as MediaStream);
-      }
-      if (track.kind === "audio" && !haveAudio) {
-        pc.addTrack(track, localStreamRef.current as MediaStream);
+      const existingSender = senders.find(
+        (s) => s.track?.kind === track.kind || (!s.track && (s as any).trackKind === track.kind)
+      );
+      if (existingSender) {
+        if (existingSender.track !== track) {
+          existingSender.replaceTrack(track).catch((e) => console.warn("replaceTrack failed", e));
+        }
+      } else {
+        try {
+          pc.addTrack(track, localStreamRef.current as MediaStream);
+        } catch (e) {
+          console.warn("addTrack failed", e);
+        }
       }
     });
   };
@@ -547,13 +497,7 @@ export default function VideoRoom() {
     })();
 
     // Initialize local media
-    (async () => {
-      await initializeMedia();
-      // Attach local tracks to any already-created peer connections
-      for (const pc of peerConnectionsRef.current.values()) {
-        attachLocalTracksToPc(pc);
-      }
-    })();
+    initializeMedia().catch(() => {});
 
     // Cleanup on unmount
     return () => {
@@ -665,161 +609,168 @@ export default function VideoRoom() {
     };
   }, []);
 
-  // Update initializeMedia to also attach tracks to existing PCs
+  // Update initializeMedia to track localMediaPromiseRef and attach tracks to existing PCs
   const initializeMedia = async () => {
-    const tryGet = async (constraints: MediaStreamConstraints) => {
+    const acquire = async () => {
+      const tryGet = async (constraints: MediaStreamConstraints) => {
+        try {
+          return await navigator.mediaDevices.getUserMedia(constraints);
+        } catch (err: any) {
+          throw err;
+        }
+      };
+
       try {
-        return await navigator.mediaDevices.getUserMedia(constraints);
-      } catch (err: any) {
-        throw err;
+        // Primary constraints (stronger echo suppression)
+        let stream = await tryGet({
+          video: { facingMode: "user" },
+          audio: {
+            echoCancellation: { ideal: true } as any,
+            noiseSuppression: { ideal: true } as any,
+            autoGainControl: { ideal: true } as any,
+            channelCount: { ideal: 1 } as any,
+          } as any,
+        });
+
+        // Success: hide prompt if visible
+        setNeedsPermissionPrompt(false);
+        setPermissionDetail("");
+
+        localStreamRef.current = stream;
+
+        // Apply track-level hints and constraints
+        const mic = stream.getAudioTracks()[0];
+        if (mic) {
+          try {
+            mic.contentHint = "speech";
+            await mic.applyConstraints({
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true,
+              channelCount: 1,
+            } as any);
+          } catch (e) {
+            console.debug("Mic track constraints not fully supported", e);
+          }
+        }
+
+        // Notify if tracks end (e.g., device unplugged, permission revoked)
+        stream.getTracks().forEach((t) => {
+          t.onended = () => {
+            toast.warning(`${t.kind === "video" ? "Camera" : "Microphone"} stopped`);
+          };
+        });
+
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          const p = (videoRef.current as HTMLVideoElement).play();
+          if (p && typeof p.then === "function") {
+            p.catch(() => {});
+          }
+        }
+
+        // Attach to existing PCs
+        for (const pc of peerConnectionsRef.current.values()) {
+          attachLocalTracksToPc(pc);
+        }
+
+        // Set main video ready state
+        setMainVideoReady(true);
+        setMainVideoError(null);
+        setIsLocalMediaReady(true);
+        return stream;
+      } catch (error: any) {
+        // If permission denied, show prompt and guidance
+        if (error && typeof error.name === "string" && error.name === "NotAllowedError") {
+          setNeedsPermissionPrompt(true);
+          setPermissionDetail(
+            "Permission was blocked. Click 'Enable Camera & Mic'. If it doesn't prompt, click the lock icon in your browser's address bar and allow camera & microphone."
+          );
+        }
+
+        // Try fallbacks: video-only, then audio-only
+        console.warn("Primary getUserMedia failed, trying fallbacks", error);
+        try {
+          const videoOnly = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+          localStreamRef.current = videoOnly;
+          if (videoRef.current) {
+            videoRef.current.srcObject = videoOnly;
+            videoRef.current.play().catch(() => {});
+          }
+          for (const pc of peerConnectionsRef.current.values()) attachLocalTracksToPc(pc);
+          toast.warning("Microphone unavailable. Using camera only.");
+          setMainVideoReady(true);
+          setMainVideoError(null);
+          setIsLocalMediaReady(true);
+          return videoOnly;
+        } catch (e1: any) {
+          try {
+            const audioOnly = await navigator.mediaDevices.getUserMedia({
+              video: false,
+              audio: {
+                echoCancellation: { ideal: true } as any,
+                noiseSuppression: { ideal: true } as any,
+                autoGainControl: { ideal: true } as any,
+                channelCount: { ideal: 1 } as any,
+              } as any,
+            });
+            const mic = audioOnly.getAudioTracks()[0];
+            if (mic) {
+              try {
+                mic.contentHint = "speech";
+                await mic.applyConstraints({
+                  echoCancellation: true,
+                  noiseSuppression: true,
+                  autoGainControl: true,
+                  channelCount: 1,
+                } as any);
+              } catch {}
+            }
+            localStreamRef.current = audioOnly;
+            if (videoRef.current) {
+              videoRef.current.srcObject = audioOnly;
+            }
+            for (const pc of peerConnectionsRef.current.values()) attachLocalTracksToPc(pc);
+            toast.warning("Camera unavailable. Using microphone only.");
+            setMainVideoReady(true);
+            setMainVideoError(null);
+            setIsLocalMediaReady(true);
+            return audioOnly;
+          } catch (e2: any) {
+            let msg = "Could not access camera or microphone";
+            if (error && typeof error.name === "string") {
+              switch (error.name) {
+                case "NotAllowedError":
+                  msg = "Permission denied for camera/microphone. Please allow access.";
+                  break;
+                case "NotFoundError":
+                case "DevicesNotFoundError":
+                  msg = "No camera or microphone found.";
+                  break;
+                case "NotReadableError":
+                  msg = "Your camera/microphone is already in use by another app.";
+                  break;
+                case "OverconstrainedError":
+                  msg = "Device cannot satisfy requested media constraints.";
+                  break;
+                default:
+                  msg = `Media error: ${error.name}`;
+              }
+            }
+            console.error("Error accessing media devices:", error, e1, e2);
+            toast.error(msg);
+            setMainVideoError(msg || "Could not access camera or microphone");
+            setMainVideoReady(false);
+            setIsLocalMediaReady(false);
+            return null;
+          }
+        }
       }
     };
 
-    try {
-      // Primary constraints (stronger echo suppression)
-      let stream = await tryGet({
-        video: { facingMode: "user" },
-        audio: {
-          echoCancellation: { ideal: true } as any,
-          noiseSuppression: { ideal: true } as any,
-          autoGainControl: { ideal: true } as any,
-          channelCount: { ideal: 1 } as any,
-        } as any,
-      });
-
-      // Success: hide prompt if visible
-      setNeedsPermissionPrompt(false);
-      setPermissionDetail("");
-
-      localStreamRef.current = stream;
-
-      // Apply track-level hints and constraints
-      const mic = stream.getAudioTracks()[0];
-      if (mic) {
-        try {
-          mic.contentHint = "speech";
-          await mic.applyConstraints({
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-            channelCount: 1,
-          } as any);
-        } catch (e) {
-          console.debug("Mic track constraints not fully supported", e);
-        }
-      }
-
-      // Notify if tracks end (e.g., device unplugged, permission revoked)
-      stream.getTracks().forEach((t) => {
-        t.onended = () => {
-          toast.warning(`${t.kind === "video" ? "Camera" : "Microphone"} stopped`);
-        };
-        t.onmute = () => {
-          // Avoid noisy toasts; log instead
-          console.debug(`${t.kind} track muted`);
-        };
-        t.onunmute = () => {
-          console.debug(`${t.kind} track unmuted`);
-        };
-      });
-
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        const p = (videoRef.current as HTMLVideoElement).play();
-        if (p && typeof p.then === "function") {
-          p.catch(() => {
-            // Some browsers block autoplay until user gesture
-            toast.info("Tap to start local video playback");
-          });
-        }
-      }
-
-      // Attach to existing PCs
-      for (const pc of peerConnectionsRef.current.values()) {
-        attachLocalTracksToPc(pc);
-      }
-
-      // Set main video ready state
-      setMainVideoReady(true);
-      setMainVideoError(null);
-    } catch (error: any) {
-      // If permission denied, show prompt and guidance
-      if (error && typeof error.name === "string" && error.name === "NotAllowedError") {
-        setNeedsPermissionPrompt(true);
-        setPermissionDetail(
-          "Permission was blocked. Click 'Enable Camera & Mic'. If it doesn't prompt, click the lock icon in your browser's address bar and allow camera & microphone."
-        );
-      }
-
-      // Try fallbacks: video-only, then audio-only
-      console.warn("Primary getUserMedia failed, trying fallbacks", error);
-      try {
-        const videoOnly = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-        localStreamRef.current = videoOnly;
-        if (videoRef.current) {
-          videoRef.current.srcObject = videoOnly;
-          videoRef.current.play().catch(() => toast.info("Tap to start local video playback"));
-        }
-        for (const pc of peerConnectionsRef.current.values()) attachLocalTracksToPc(pc);
-        toast.warning("Microphone unavailable. Using camera only.");
-      } catch (e1: any) {
-        try {
-          const audioOnly = await navigator.mediaDevices.getUserMedia({
-            video: false,
-            audio: {
-              echoCancellation: { ideal: true } as any,
-              noiseSuppression: { ideal: true } as any,
-              autoGainControl: { ideal: true } as any,
-              channelCount: { ideal: 1 } as any,
-            } as any,
-          });
-          // Apply track-level constraints if possible
-          const mic = audioOnly.getAudioTracks()[0];
-          if (mic) {
-            try {
-              mic.contentHint = "speech";
-              await mic.applyConstraints({
-                echoCancellation: true,
-                noiseSuppression: true,
-                autoGainControl: true,
-                channelCount: 1,
-              } as any);
-            } catch {}
-          }
-          localStreamRef.current = audioOnly;
-          if (videoRef.current) {
-            videoRef.current.srcObject = audioOnly;
-          }
-          for (const pc of peerConnectionsRef.current.values()) attachLocalTracksToPc(pc);
-          toast.warning("Camera unavailable. Using microphone only.");
-        } catch (e2: any) {
-          let msg = "Could not access camera or microphone";
-          if (error && typeof error.name === "string") {
-            switch (error.name) {
-              case "NotAllowedError":
-                msg = "Permission denied for camera/microphone. Please allow access.";
-                break;
-              case "NotFoundError":
-              case "DevicesNotFoundError":
-                msg = "No camera or microphone found.";
-                break;
-              case "NotReadableError":
-                msg = "Your camera/microphone is already in use by another app.";
-                break;
-              case "OverconstrainedError":
-                msg = "Device cannot satisfy requested media constraints.";
-                break;
-              default:
-                msg = `Media error: ${error.name}`;
-            }
-          }
-          console.error("Error accessing media devices:", error, e1, e2);
-          toast.error(msg);
-          setMainVideoError(msg || "Could not access camera or microphone");
-          setMainVideoReady(false);
-        }
-      }
-    }
+    const p = acquire();
+    localMediaPromiseRef.current = p;
+    return await p;
   };
 
   // Enhance screen share to replace outgoing tracks to all peers and revert cleanly
@@ -906,7 +857,8 @@ export default function VideoRoom() {
     remoteVolumeRef.current.set(uid, vol);
     const el = remoteVideoElsRef.current.get(uid);
     if (el) el.volume = vol;
-    // Trigger re-render for slider controlled value
+    const audioEl = document.getElementById(`audio-remote-${uid}`) as HTMLAudioElement | null;
+    if (audioEl) audioEl.volume = vol;
     forceRender((n) => n + 1);
   };
 
@@ -936,7 +888,6 @@ export default function VideoRoom() {
 
       for (const s of signals) {
         const fromId = String((s as any).fromUserId);
-        const pc = ensurePeerConnection(fromId);
         const polite = isPoliteWith(fromId);
 
         try {
@@ -954,10 +905,19 @@ export default function VideoRoom() {
               continue;
             }
 
-            // Glare handling: if not stable and we're impolite, ignore this offer
-            if (pc.signalingState !== "stable") {
+            // Ensure callee's local media is ready before answering so answer includes camera and mic
+            if (!localStreamRef.current && localMediaPromiseRef.current) {
+              await localMediaPromiseRef.current.catch(() => {});
+            }
+
+            const pc = ensurePeerConnection(fromId);
+            attachLocalTracksToPc(pc);
+
+            // Glare handling: if collision occurs
+            const isCollision = makingOfferRef.current.get(fromId) || pc.signalingState !== "stable";
+            if (isCollision) {
               if (!polite) {
-                // Ignore when we're the impolite peer
+                // Impolite peer ignores colliding offer
                 continue;
               }
               try {
@@ -971,7 +931,6 @@ export default function VideoRoom() {
             try {
               await pc.setRemoteDescription(remoteDesc);
             } catch (e: any) {
-              // Retry after rollback for InvalidState
               if (e?.name === "InvalidStateError" || String(e?.message || "").includes("InvalidState")) {
                 try {
                   try {
@@ -980,8 +939,6 @@ export default function VideoRoom() {
                   await pc.setRemoteDescription(remoteDesc);
                 } catch (retryErr) {
                   console.error("Retry after rollback failed", retryErr);
-                  toast.error(`Negotiation failed with ${getDisplayName(fromId)}. Retrying may help.`);
-                  // Bubble up to trigger hard recovery below
                   throw retryErr;
                 }
               } else {
@@ -1014,8 +971,8 @@ export default function VideoRoom() {
             // Mark this offer as processed
             lastOfferByPeerRef.current.set(fromId, incomingSdp);
           } else if (s.kind === "answer") {
-            // Only apply answer if we actually have a local offer outstanding
-            if (pc.signalingState === "have-local-offer") {
+            const pc = peerConnectionsRef.current.get(fromId);
+            if (pc && pc.signalingState === "have-local-offer") {
               const remoteDesc = new RTCSessionDescription({
                 type: "answer",
                 sdp: s.payload?.sdp || "",
@@ -1031,8 +988,6 @@ export default function VideoRoom() {
                 }
               }
               pendingCandidatesRef.current.delete(fromId);
-            } else {
-              // Ignore unexpected answer
             }
           } else if (s.kind === "candidate") {
             const payload = s.payload;
@@ -1042,6 +997,7 @@ export default function VideoRoom() {
                 sdpMid: payload.sdpMid,
                 sdpMLineIndex: payload.sdpMLineIndex,
               };
+              const pc = ensurePeerConnection(fromId);
               try {
                 if (!pc.remoteDescription) {
                   const arr = pendingCandidatesRef.current.get(fromId) || [];
@@ -1064,32 +1020,11 @@ export default function VideoRoom() {
             makingOfferRef.current.delete(fromId);
             pendingCandidatesRef.current.delete(fromId);
             lastOfferByPeerRef.current.delete(fromId);
+            setSelectedPeerId((prev) => (prev === fromId ? null : prev));
             forceRender((n) => n + 1);
           }
         } catch (e) {
-          // Hard recovery on unexpected errors in offer path
           console.error("Signal handling error", e);
-          if (s.kind === "offer") {
-            try {
-              try {
-                pc.close();
-              } catch {}
-              peerConnectionsRef.current.delete(fromId);
-              remoteStreamsRef.current.delete(fromId);
-              makingOfferRef.current.delete(fromId);
-              pendingCandidatesRef.current.delete(fromId);
-              lastOfferByPeerRef.current.delete(fromId);
-
-              const fresh = ensurePeerConnection(fromId);
-              attachLocalTracksToPc(fresh);
-              await createOfferTo(fromId);
-
-              toast.warning(`Recovered from an offer error with ${getDisplayName(fromId)}. Reconnecting...`);
-            } catch (recoverErr) {
-              console.error("Hard recovery after offer error failed", recoverErr);
-              toast.error(`Failed to process offer from ${getDisplayName(fromId)}.`);
-            }
-          }
         } finally {
           ackIds.push((s as any)._id);
         }
@@ -1107,21 +1042,20 @@ export default function VideoRoom() {
     process();
   }, [signals, roomId, user?._id]);
 
-  // After local media and participants are loaded, call others
+  // After local media and participants are loaded, caller initiates offer
   useEffect(() => {
-    if (!participants || !roomId || !user?._id) return;
-    // Initiate offers to all others (mesh)
+    if (!participants || !roomId || !user?._id || !isLocalMediaReady) return;
     const others = participants
       .map((p: any) => p.user?._id)
-      .filter((uid: any) => uid && uid !== (user as any)._id) as string[];
+      .filter((uid: any) => uid && String(uid) !== String((user as any)._id)) as string[];
 
     for (const otherId of others) {
-      // Only create offer if not already connected
-      if (!peerConnectionsRef.current.has(otherId)) {
+      // Deterministic caller initiates offer (prevents glare collisions)
+      if (isCallerFor(otherId) && !peerConnectionsRef.current.has(otherId)) {
         createOfferTo(otherId);
       }
     }
-  }, [participants, roomId, user?._id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [participants, roomId, user?._id, isLocalMediaReady]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleLeaveRoom = async () => {
     try {
@@ -1318,23 +1252,57 @@ export default function VideoRoom() {
     }
   };
 
-  // Helper: select the preferred video track for the main stage (admin/host video if available)
-  const getHostPreferredVideoTrack = () => {
-    const hostId = participants?.find((p: any) => p.isHost)?.user?._id as string | undefined;
-    if (hostId && String(hostId) !== String((user as any)?._id)) {
-      const hostStream = remoteStreamsRef.current.get(hostId);
-      if (hostStream) {
-        const vt = hostStream.getVideoTracks().find((t) => t.readyState === "live") || hostStream.getVideoTracks()[0];
-        return vt || null;
+  // Active remote streams for main stage & participant panels
+  const remotePeerEntries = Array.from(remoteStreamsRef.current.entries()).filter(
+    ([, stream]) => stream && stream.getTracks().length > 0
+  );
+
+  const activeMainPeerId = (() => {
+    if (selectedPeerId && remoteStreamsRef.current.has(selectedPeerId)) {
+      return selectedPeerId;
+    }
+    // Prefer remote peer with a live video track
+    const withLiveVideo = remotePeerEntries.find(([, stream]) =>
+      stream.getVideoTracks().some((t) => t.readyState === "live")
+    );
+    if (withLiveVideo) return withLiveVideo[0];
+    if (remotePeerEntries.length > 0 && remotePeerEntries[0]) return remotePeerEntries[0][0];
+    return null;
+  })();
+
+  const activeMainStream = activeMainPeerId
+    ? remoteStreamsRef.current.get(activeMainPeerId) || null
+    : null;
+
+  // Synchronize main video element and PiP video element with active streams
+  useEffect(() => {
+    const mainEl = mainVideoRef.current;
+    if (mainEl) {
+      const targetStream = activeMainStream || localStreamRef.current;
+      if (targetStream) {
+        if (mainEl.srcObject !== targetStream) {
+          mainEl.srcObject = targetStream;
+        }
+        mainEl.muted = true;
+        mainEl.play().catch(() => {});
+      } else if (mainEl.srcObject) {
+        mainEl.srcObject = null;
       }
     }
-    // Fallback to local camera track
-    const localTrack = localStreamRef.current?.getVideoTracks()[0] || null;
-    return localTrack;
-  };
+
+    const pipEl = videoRef.current;
+    if (pipEl && localStreamRef.current) {
+      if (pipEl.srcObject !== localStreamRef.current) {
+        pipEl.srcObject = localStreamRef.current;
+      }
+      pipEl.muted = true;
+      pipEl.play().catch(() => {});
+    }
+  }, [activeMainStream, isLocalMediaReady, remotePeerEntries.length]);
 
   const RemoteVideos = () => {
-    const entries = Array.from(remoteStreamsRef.current.entries());
+    if (remotePeerEntries.length === 0) return null;
+
     return (
       <div
         className="
@@ -1351,16 +1319,12 @@ export default function VideoRoom() {
       >
         {/* Panel header */}
         <div className="flex items-center justify-between px-1">
-          <p className="text-xs font-semibold tracking-wide text-white/90">Participants</p>
-          <span className="text-[10px] text-white/60">{entries.length}</span>
+          <p className="text-xs font-semibold tracking-wide text-white/90">Participants ({remotePeerEntries.length})</p>
+          <span className="text-[10px] text-blue-300">Click tile to focus</span>
         </div>
 
-        {entries.map(([uid, stream]) => {
-          const videoTracks = stream.getVideoTracks();
-          const preferredTrack =
-            videoTracks.find((t) => t.readyState === "live") || videoTracks[0] || null;
-
-          // Read current volume (default 1)
+        {remotePeerEntries.map(([uid, stream]) => {
+          const isMain = activeMainPeerId === uid;
           const vol = remoteVolumeRef.current.get(uid) ?? 1;
 
           return (
@@ -1368,136 +1332,62 @@ export default function VideoRoom() {
               key={uid}
               initial={{ opacity: 0, scale: 0.96 }}
               animate={{ opacity: 1, scale: 1 }}
-              className="
+              onClick={() => setSelectedPeerId(uid)}
+              className={`
                 group relative
-                shrink-0
+                shrink-0 cursor-pointer
                 w-40 h-28 xs:w-44 xs:h-32 sm:w-48 sm:h-36 md:w-full md:h-44 lg:h-48
                 rounded-xl overflow-hidden
-                ring-1 ring-white/15 hover:ring-white/30 transition-all duration-200
-                shadow-[0_12px_32px_rgba(0,0,0,0.5)] bg-gray-900/70
+                ring-2 ${isMain ? "ring-blue-500 shadow-blue-500/20" : "ring-white/15 hover:ring-white/30"} transition-all duration-200
+                shadow-[0_12px_32px_rgba(0,0,0,0.5)] bg-gray-900/80
                 flex
-              "
+              `}
             >
               <video
                 autoPlay
                 playsInline
+                muted
                 className="w-full h-full object-contain sm:object-cover"
                 ref={(el) => {
                   if (!el) return;
-                  // Store element ref for volume control
                   remoteVideoElsRef.current.set(uid, el);
-                  // Attach track
-                  if (preferredTrack) {
-                    const current = (el.srcObject as MediaStream | null) || null;
-                    const currentTrackId = current?.getVideoTracks?.()[0]?.id;
-                    if (currentTrackId !== preferredTrack.id) {
-                      const ms = new MediaStream();
-                      try {
-                        ms.addTrack(preferredTrack);
-                      } catch {}
-                      el.srcObject = ms;
-                      el.muted = true; // start muted for autoplay policies; user can unmute with slider icon
-                      // Apply persisted volume
-                      el.volume = remoteVolumeRef.current.get(uid) ?? 1;
-
-                      preferredTrack.onended = () => {
-                        toastOnce(`remote:${uid}:trackended:${preferredTrack.id}`, () =>
-                          toast.warning(`${getDisplayName(uid)}'s video stopped`)
-                        );
-                      };
-                      preferredTrack.onmute = () => {
-                        console.debug(`Remote video track muted for ${getDisplayName(uid)}`);
-                      };
-                      preferredTrack.onunmute = () => {
-                        console.debug(`Remote video track unmuted for ${getDisplayName(uid)}`);
-                      };
-                      el.play().catch((err) => {
-                        console.warn("Auto-play failed for remote video track", err);
-                        toastOnce(`remote:${uid}:tap-to-play:${preferredTrack.id}`, () =>
-                          toast.info(`Tap to play ${getDisplayName(uid)}`)
-                        );
-                      });
-                    } else {
-                      // Ensure volume sync if same track
-                      el.volume = remoteVolumeRef.current.get(uid) ?? 1;
-                    }
-                  } else {
-                    if (el.srcObject) el.srcObject = null;
+                  if (el.srcObject !== stream) {
+                    el.srcObject = stream;
                   }
+                  el.muted = true; // Video element muted; audio played by dedicated audio element
+                  el.play().catch(() => {});
                 }}
                 onDoubleClick={(e) => {
-                  // Toggle fullscreen for this remote participant tile container
+                  e.stopPropagation();
                   const container = e.currentTarget.parentElement as HTMLElement | null;
                   toggleFullscreen(container);
                 }}
-                onClick={(e) => {
-                  const el = e.currentTarget;
-                  if (el.muted) {
-                    el.muted = false;
-                    el.play().catch((err) => {
-                      console.warn("Play after unmute failed", err);
-                      toastOnce(`remote:${uid}:tap-again`, () =>
-                        toast.info(`Tap again to play ${getDisplayName(uid)}`)
-                      );
-                    });
-                  }
-                }}
-                onLoadedMetadata={(e) => {
-                  const el = e.currentTarget;
-                  // Keep volume in sync
-                  el.volume = remoteVolumeRef.current.get(uid) ?? 1;
-                  if (el.paused) {
-                    el.play().catch(() => {
-                      toastOnce(`remote:${uid}:loadedmetadata-play`, () =>
-                        toast.info(`Tap video to play for ${getDisplayName(uid)}`)
-                      );
-                    });
-                  }
-                }}
-                onStalled={() =>
-                  toastOnce(`remote:${uid}:stalled`, () =>
-                    toast.warning(`Video from ${getDisplayName(uid)} stalled. Reconnecting...`)
-                  )
-                }
-                onWaiting={() =>
-                  toastOnce(`remote:${uid}:waiting`, () =>
-                    toast.info(`Waiting for ${getDisplayName(uid)}'s video...`)
-                  )
-                }
-                onEmptied={() =>
-                  toastOnce(`remote:${uid}:emptied`, () =>
-                    toast.warning(`Video stream from ${getDisplayName(uid)} was interrupted`)
-                  )
-                }
-                onSuspend={() =>
-                  toastOnce(`remote:${uid}:suspend`, () =>
-                    toast.info(`Video from ${getDisplayName(uid)} is temporarily suspended`)
-                  )
-                }
-                onError={() => {
-                  toastOnce(`remote:${uid}:error`, () =>
-                    toast.error(`Remote video failed to render for ${getDisplayName(uid)}`)
-                  );
-                  // Add: targeted renegotiation for this peer on error
-                  recoverLocalMediaAndRenegotiate(uid).catch(() => {});
-                }}
-                muted
-                aria-label={`Remote video from ${getDisplayName(uid)}. Tap to toggle audio.`}
+                aria-label={`Remote video from ${getDisplayName(uid)}`}
               />
               {/* top gradient and live badge */}
               <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-black/20" />
-              <span className="pointer-events-none absolute top-2 left-2 text-[10px] font-semibold tracking-wide px-2 py-0.5 rounded-full bg-red-500/90 text-white shadow">
-                Live
-              </span>
+              <div className="absolute top-2 left-2 flex items-center gap-1.5 pointer-events-none">
+                <span className="text-[10px] font-semibold tracking-wide px-2 py-0.5 rounded-full bg-red-500 text-white shadow">
+                  Live
+                </span>
+                {isMain && (
+                  <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-blue-600 text-white shadow">
+                    On Stage
+                  </span>
+                )}
+              </div>
               {/* Controls bar: name + volume */}
-              <div className="absolute bottom-1 left-1 right-1 flex items-center gap-2 rounded-md px-2 py-1.5 bg-black/55 backdrop-blur-sm">
+              <div
+                className="absolute bottom-1 left-1 right-1 flex items-center gap-2 rounded-md px-2 py-1.5 bg-black/65 backdrop-blur-sm"
+                onClick={(e) => e.stopPropagation()}
+              >
                 <Avatar className="w-6 h-6 shrink-0 ring-1 ring-white/25">
                   <AvatarImage src={getAvatarImage(uid)} />
                   <AvatarFallback className="text-[10px]">
                     {getInitials(getDisplayName(uid), undefined)}
                   </AvatarFallback>
                 </Avatar>
-                <p className="text-[11px] leading-tight text-white/95 truncate flex-1">
+                <p className="text-[11px] leading-tight text-white/95 truncate flex-1 font-medium">
                   {getDisplayName(uid)}
                 </p>
                 <button
@@ -1507,9 +1397,9 @@ export default function VideoRoom() {
                   aria-label={vol === 0 ? "Unmute participant" : "Mute participant"}
                   title={vol === 0 ? "Unmute" : "Mute"}
                 >
-                  {vol === 0 ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
+                  {vol === 0 ? <VolumeX className="h-3.5 w-3.5" /> : <Volume2 className="h-3.5 w-3.5" />}
                 </button>
-                <div className="w-20 sm:w-24 pl-1">
+                <div className="w-16 sm:w-20 pl-1">
                   <Slider
                     value={[vol]}
                     min={0}
@@ -1802,39 +1692,42 @@ export default function VideoRoom() {
         {/* Main Video Area */}
         <div className="flex-1 relative" ref={mainContainerRef}>
           {/* Main Video */}
-          <div className="h-full bg-gray-800 flex items-center justify-center relative">
+          <div className="h-full bg-gray-950 flex items-center justify-center relative overflow-hidden">
+            {/* Background Audio Elements for Remote Participants */}
+            {remotePeerEntries.map(([uid, stream]) => (
+              <audio
+                key={uid}
+                id={`audio-remote-${uid}`}
+                autoPlay
+                playsInline
+                ref={(el) => {
+                  if (el) {
+                    if (el.srcObject !== stream) {
+                      el.srcObject = stream;
+                    }
+                    el.volume = remoteVolumeRef.current.get(uid) ?? 1;
+                    el.play().catch((err) => {
+                      console.debug("Audio autoplay deferred for peer", uid, err);
+                    });
+                  }
+                }}
+              />
+            ))}
+
+            {/* Main Stage Video */}
             <video
               ref={(el) => {
                 mainVideoRef.current = el;
                 if (!el) return;
-                const preferredTrack = getHostPreferredVideoTrack();
-                if (preferredTrack) {
-                  const current = (el.srcObject as MediaStream | null) || null;
-                  const currentTrackId = current?.getVideoTracks?.()[0]?.id;
-                  if (currentTrackId !== preferredTrack.id) {
-                    const ms = new MediaStream();
-                    try {
-                      ms.addTrack(preferredTrack);
-                    } catch {}
-                    el.srcObject = ms;
-                    el.muted = true; // UI audio controlled via remote tiles
-                    el.play().catch(() => {
-                      toastOnce(`main:tap-to-play`, () =>
-                        toast.info("Tap to start video playback")
-                      );
-                    });
+                const targetStream = activeMainStream || localStreamRef.current;
+                if (targetStream) {
+                  if (el.srcObject !== targetStream) {
+                    el.srcObject = targetStream;
                   }
-                } else {
-                  // fallback to local full stream if no track chosen
-                  if (localStreamRef.current) {
-                    el.srcObject = localStreamRef.current;
-                    el.muted = true;
-                    el.play().catch(() => {
-                      toastOnce(`main:tap-to-play-local`, () =>
-                        toast.info("Tap to start local video playback")
-                      );
-                    });
-                  }
+                  el.muted = true; // Video muted; audio handled by <audio> elements
+                  el.play().catch(() => {});
+                } else if (el.srcObject) {
+                  el.srcObject = null;
                 }
               }}
               autoPlay
@@ -1844,24 +1737,17 @@ export default function VideoRoom() {
               onLoadedMetadata={(e) => {
                 const el = e.currentTarget;
                 if (el.paused) {
-                  el.play().catch(() => {
-                    toastOnce(`main:loadedmetadata-play`, () =>
-                      toast.info("Tap to start video playback")
-                    );
-                  });
+                  el.play().catch(() => {});
                 }
               }}
-              // Add: readiness and error handlers
               onPlaying={() => {
                 setMainVideoReady(true);
                 setMainVideoError(null);
               }}
               onPause={() => {
-                // Don't treat user-intentional pauses as hard errors; just mark not ready
                 setMainVideoReady(false);
               }}
               onCanPlay={() => {
-                // If we can play, clear transient error
                 setMainVideoError(null);
               }}
               onStalled={() =>
@@ -1886,36 +1772,68 @@ export default function VideoRoom() {
               }
               onError={(e) => {
                 const errMsg = (e?.currentTarget?.error as any)?.message || "Video failed to render";
-                toastOnce(`main:error`, () =>
-                  toast.error("Video failed to render")
-                );
                 setMainVideoError(errMsg);
                 setMainVideoReady(false);
-                // Attempt to recover all connections if main fails
                 recoverLocalMediaAndRenegotiate().catch(() => {});
               }}
               className="w-full h-full object-cover"
             />
 
-            {/* Self preview (PiP) */}
-            <div className="absolute bottom-28 sm:bottom-24 left-4 z-30">
-              <div className="w-40 h-28 sm:w-52 sm:h-36 rounded-xl overflow-hidden ring-2 ring-white/20 shadow-[0_8px_24px_rgba(0,0,0,0.45)] bg-black/40 backdrop-blur">
+            {/* Active remote participant badge on main stage */}
+            {activeMainPeerId && (
+              <div className="absolute top-4 left-4 z-20 flex items-center gap-2 bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/10 shadow-lg">
+                <span className="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse" />
+                <span className="text-xs font-semibold text-white/95">
+                  {getDisplayName(activeMainPeerId)}
+                </span>
+                <span className="text-[10px] text-gray-400 bg-white/10 px-1.5 py-0.5 rounded">
+                  Main Stage
+                </span>
+              </div>
+            )}
+
+            {/* Self preview (PiP) - visible when remote participant is on main stage */}
+            <div
+              className={`
+                absolute bottom-28 sm:bottom-24 left-4 z-30 transition-all duration-300
+                ${activeMainStream ? "opacity-100 scale-100 pointer-events-auto" : "opacity-0 scale-95 pointer-events-none"}
+              `}
+            >
+              <div className="w-40 h-28 sm:w-52 sm:h-36 rounded-xl overflow-hidden ring-2 ring-white/20 shadow-[0_8px_24px_rgba(0,0,0,0.5)] bg-black/60 backdrop-blur relative">
                 <video
-                  ref={videoRef}
+                  ref={(el) => {
+                    videoRef.current = el;
+                    if (el && localStreamRef.current && el.srcObject !== localStreamRef.current) {
+                      el.srcObject = localStreamRef.current;
+                      el.muted = true;
+                      el.play().catch(() => {});
+                    }
+                  }}
                   autoPlay
                   muted
                   playsInline
-                  className="w-full h-full object-cover"
+                  className={`w-full h-full object-cover ${isVideoOn ? "" : "hidden"}`}
                   aria-label="Your camera preview"
                 />
+                {!isVideoOn && (
+                  <div className="w-full h-full flex flex-col items-center justify-center bg-gray-800 text-center p-2">
+                    <Avatar className="w-10 h-10 mb-1 ring-1 ring-white/20">
+                      <AvatarImage src={user?.image} />
+                      <AvatarFallback className="text-xs">
+                        {getInitials(user?.name, user?.email)}
+                      </AvatarFallback>
+                    </Avatar>
+                    <p className="text-[10px] text-gray-400">Camera off</p>
+                  </div>
+                )}
               </div>
-              <div className="mt-1 text-[10px] text-white/80 px-1.5 py-0.5 rounded bg-black/40 inline-block">
+              <div className="mt-1 text-[10px] font-medium text-white/90 px-2 py-0.5 rounded bg-black/60 backdrop-blur inline-block border border-white/10">
                 You
               </div>
             </div>
 
             {/* Video health banner */}
-            {(mainVideoError || !mainVideoReady) && (
+            {(mainVideoError || (!mainVideoReady && !activeMainStream && !localStreamRef.current)) && (
               <div className="absolute top-4 left-1/2 -translate-x-1/2 z-40">
                 <div className="flex items-center gap-3 max-w-[92vw] sm:max-w-xl rounded-xl border border-yellow-400/30 bg-yellow-500/10 text-yellow-200 px-4 py-2 backdrop-blur shadow-lg">
                   <span className="text-xs sm:text-sm truncate">
@@ -1933,8 +1851,54 @@ export default function VideoRoom() {
               </div>
             )}
 
+            {/* Camera off overlay on main stage when user is alone and has camera off */}
+            {!activeMainStream && !isVideoOn && (
+              <div className="absolute inset-0 bg-gray-900 flex items-center justify-center z-10">
+                <div className="text-center">
+                  <Avatar className="w-24 h-24 mx-auto mb-4 ring-2 ring-white/20 shadow-xl">
+                    <AvatarImage src={user?.image} />
+                    <AvatarFallback className="text-2xl">
+                      {getInitials(user?.name, user?.email)}
+                    </AvatarFallback>
+                  </Avatar>
+                  <p className="text-gray-200 font-medium text-lg">{user?.name || user?.email}</p>
+                  <p className="text-sm text-gray-400 mt-1">Your camera is turned off</p>
+                  <Button
+                    size="sm"
+                    onClick={toggleVideo}
+                    className="mt-4 bg-blue-600 hover:bg-blue-700"
+                  >
+                    Turn Camera On
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {/* Waiting for others indicator when user is alone in the room */}
+            {remotePeerEntries.length === 0 && (
+              <div className="absolute top-4 right-4 z-20">
+                <div className="bg-gray-900/80 border border-white/10 px-4 py-3 rounded-xl shadow-xl backdrop-blur-md flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-full bg-blue-500/20 text-blue-400 flex items-center justify-center shrink-0">
+                    <Users className="w-4 h-4 animate-pulse" />
+                  </div>
+                  <div className="text-left">
+                    <p className="text-xs font-semibold text-white">Waiting for family to join</p>
+                    <p className="text-[11px] text-gray-400">Share invite link to connect</p>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setShowInvite(true)}
+                    className="border-gray-700 hover:bg-gray-800 text-xs h-7 px-2.5 ml-1 text-white"
+                  >
+                    Invite
+                  </Button>
+                </div>
+              </div>
+            )}
+
             {needsPermissionPrompt && (
-              <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/70 backdrop-blur-sm px-4">
+              <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/70 backdrop-blur-sm px-4">
                 <div className="max-w-md w-full bg-gray-800/90 border border-white/10 rounded-2xl p-6 shadow-2xl">
                   <div className="space-y-3">
                     <h3 className="text-lg font-semibold">Enable Camera & Microphone</h3>
@@ -1950,30 +1914,13 @@ export default function VideoRoom() {
                       <Button
                         className="w-full bg-blue-600 hover:bg-blue-700"
                         onClick={() => {
-                          // Force re-prompt by attempting to acquire both tracks under user gesture
-                          initializeMedia().catch(() => {
-                            // Swallow here; initializeMedia handles toasts and state
-                          });
+                          initializeMedia().catch(() => {});
                         }}
                       >
                         Enable Camera & Mic
                       </Button>
                     </div>
                   </div>
-                </div>
-              </div>
-            )}
-            {!isVideoOn && (
-              <div className="absolute inset-0 bg-gray-700 flex items-center justify-center">
-                <div className="text-center">
-                  <Avatar className="w-24 h-24 mx-auto mb-4">
-                    <AvatarImage src={user?.image} />
-                    <AvatarFallback className="text-2xl">
-                      {getInitials(user?.name, user?.email)}
-                    </AvatarFallback>
-                  </Avatar>
-                  <p className="text-gray-300">{user?.name || user?.email}</p>
-                  <p className="text-sm text-gray-500">Camera is off</p>
                 </div>
               </div>
             )}
@@ -2069,42 +2016,6 @@ export default function VideoRoom() {
               </div>
             </div>
           </div>
-
-          {/* Participants Grid */}
-          {participants && participants.length > 1 && (
-            <div className="absolute top-4 right-4 space-y-2">
-              {participants
-                .filter((p: any) => p.user?._id !== user?._id)
-                .slice(0, 3)
-                .map((participant: any) => (
-                  <motion.div
-                    key={participant._id}
-                    initial={{ opacity: 0, scale: 0.85 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    className="
-                      w-36 h-24 rounded-xl overflow-hidden relative
-                      ring-2 ring-white/10 hover:ring-white/25 transition-all duration-200
-                      bg-gray-800 shadow-[0_8px_24px_rgba(0,0,0,0.45)] backdrop-blur
-                    "
-                  >
-                    <div className="w-full h-full flex items-center justify-center relative">
-                      <div className="absolute inset-0 bg-gradient-to-b from-black/20 via-transparent to-black/30" />
-                      <Avatar className="w-12 h-12 ring-1 ring-white/20 shadow">
-                        <AvatarImage src={participant.user?.image} />
-                        <AvatarFallback>
-                          {getInitials(participant.user?.name, participant.user?.email)}
-                        </AvatarFallback>
-                      </Avatar>
-                    </div>
-                    <div className="absolute bottom-1 left-1 right-1">
-                      <p className="text-xs text-white truncate bg-black/50 px-2 py-1 rounded-md backdrop-blur">
-                        {participant.user?.name || participant.user?.email}
-                      </p>
-                    </div>
-                  </motion.div>
-                ))}
-            </div>
-          )}
 
           {/* Remote video tiles */}
           <RemoteVideos />

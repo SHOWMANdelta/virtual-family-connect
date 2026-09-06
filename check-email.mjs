@@ -27,16 +27,28 @@ import { dirname, join } from "node:path";
 
 const argv = process.argv.slice(2);
 
+/**
+ * Product name, duplicated from BRAND_NAME in src/convex/emailTemplates.ts for
+ * the same reason `parseSender` below is duplicated: that file is TypeScript for
+ * the Convex runtime and this is plain Node. Keep the two in step — this string
+ * is the sender name the script reports and tests with.
+ */
+const BRAND = "Virtual Family Connect";
+
 const sendToArg = argv.find((a) => a.startsWith("--send-to="));
 const testRecipient = sendToArg?.slice("--send-to=".length).trim();
 
 // Forwarded verbatim to every `convex env` call so one flag targets one
-// deployment. `--deployment` takes a value, so it has to be picked up as a pair.
+// deployment. The Convex CLI spells this `--deployment-name <name>` (checked
+// against `convex env set --help`); `--deployment` is silently not a flag it
+// knows, so accept both spellings from the user and always emit the real one.
 const target = [];
 if (argv.includes("--prod")) target.push("--prod");
-const deploymentIndex = argv.indexOf("--deployment");
+const deploymentIndex = argv.findIndex(
+  (a) => a === "--deployment-name" || a === "--deployment",
+);
 if (deploymentIndex !== -1 && argv[deploymentIndex + 1]) {
-  target.push("--deployment", argv[deploymentIndex + 1]);
+  target.push("--deployment-name", argv[deploymentIndex + 1]);
 }
 
 const label = target.length === 0 ? "dev" : target.join(" ");
@@ -71,38 +83,48 @@ function convex(commandArgs) {
   });
 }
 
-/** Names of the variables set on the deployment. Values are not fetched here. */
-function envNames() {
+/**
+ * Read one variable, or undefined when it isn't set.
+ *
+ * Deliberately one `env get` per name rather than one `env list`. `convex env
+ * list` prints every variable's full *value*, which on this deployment means
+ * dumping JWT_PRIVATE_KEY — the key that signs auth tokens — into this process's
+ * buffers and onto the terminal. Asking for exactly the five names below means
+ * the signing key is never read at all.
+ *
+ * A missing variable exits 0 with empty stdout and a message on stderr (checked
+ * against the CLI), so empty output is an unambiguous "not set".
+ */
+function envValue(name) {
   try {
-    return new Set(
-      convex(["env", "list", "--names-only", ...target])
-        .split("\n")
-        .map((line) => line.trim())
-        .filter(Boolean),
-    );
+    const value = convex(["env", "get", name, ...target]).trim();
+    return value === "" ? undefined : value;
   } catch (error) {
+    // A hard failure here means the deployment itself is unreachable — wrong
+    // account, not logged in, or no such deployment. Every later check would
+    // report a misleading "not configured", so stop on the real cause.
     console.error(
       `\nCouldn't read the ${label} deployment's environment.\n` +
         (target.length === 0
           ? "Start it in another terminal with:  npx convex dev\n"
-          : "Check that the deployment exists and you're logged in.\n"),
+          : "Check that the deployment exists and you're logged in\n" +
+            "(`npx convex login`), and that this directory is linked to it.\n"),
     );
     console.error(error.stderr || error.message);
     process.exit(1);
   }
 }
 
-const present = envNames();
-
-/** Read one variable, or undefined when it isn't set. */
-function envValue(name) {
-  if (!present.has(name)) return undefined;
-  try {
-    const value = convex(["env", "get", name, ...target]).trim();
-    return value === "" ? undefined : value;
-  } catch {
-    return undefined;
-  }
+/**
+ * Whether a variable is set, without surfacing its value.
+ *
+ * For the signing keys only presence matters. The value is reduced to a boolean
+ * in one expression and never stored, printed, or returned — the hazard worth
+ * avoiding is a secret reaching the terminal or a saved log, which is precisely
+ * what `convex env list` does.
+ */
+function envIsSet(name) {
+  return envValue(name) !== undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -134,10 +156,10 @@ function parseSender(raw) {
   const angled = value.match(/^(.*?)<\s*([^<>\s]+@[^<>\s]+)\s*>$/);
   if (angled) {
     const name = angled[1].trim().replace(/^"(.*)"$/, "$1").trim();
-    return { name: name || "HealthConnect", email: angled[2].trim() };
+    return { name: name || BRAND, email: angled[2].trim() };
   }
   if (/^[^<>\s]+@[^<>\s]+$/.test(value)) {
-    return { name: "HealthConnect", email: value };
+    return { name: BRAND, email: value };
   }
   return null;
 }
@@ -180,7 +202,7 @@ if (forced === "resend" || forced === "brevo") {
 // Auth signing keys are a prerequisite for sign-in regardless of email, and their
 // absence produces an error that looks nothing like a mail problem — so surface it
 // here rather than letting it be debugged as one.
-if (!present.has("JWT_PRIVATE_KEY") || !present.has("JWKS")) {
+if (!envIsSet("JWT_PRIVATE_KEY") || !envIsSet("JWKS")) {
   line(FAIL, "JWT_PRIVATE_KEY / JWKS are not set — sign-in cannot work at all.");
   console.log(
     `         Fix: node setup-auth.mjs ${target.join(" ")}`.trimEnd(),
@@ -229,7 +251,7 @@ if (!provider || !apiKey) {
       "  1. Sign up at https://www.brevo.com and create an API key.",
       "  2. Under Senders, add an address you own and click the link it emails you.",
       `  3. npx convex env set BREVO_API_KEY xkeysib-xxxxxxxx ${target.join(" ")}`.trimEnd(),
-      `  4. npx convex env set EMAIL_FROM "HealthConnect <you@gmail.com>" ${target.join(" ")}`.trimEnd(),
+      `  4. npx convex env set EMAIL_FROM "${BRAND} <you@gmail.com>" ${target.join(" ")}`.trimEnd(),
       "  5. Re-run this check.",
       "",
     ].join("\n"),
@@ -246,12 +268,12 @@ if (devLog) {
   );
 }
 
-const sender = parseSender(fromRaw ?? "HealthConnect <onboarding@resend.dev>");
+const sender = parseSender(fromRaw ?? `${BRAND} <onboarding@resend.dev>`);
 
 if (provider === "brevo" && !fromRaw) {
   line(FAIL, "EMAIL_FROM is required for Brevo — every sender must be verified.");
   console.log(
-    `         npx convex env set EMAIL_FROM "HealthConnect <you@gmail.com>" ${target.join(" ")}`.trimEnd(),
+    `         npx convex env set EMAIL_FROM "${BRAND} <you@gmail.com>" ${target.join(" ")}`.trimEnd(),
   );
   process.exit(1);
 }
@@ -333,7 +355,7 @@ if (provider === "brevo") {
           "\n         To use one of the verified addresses above instead:",
         );
         console.log(
-          `           npx convex env set EMAIL_FROM "HealthConnect <address>" ${target.join(" ")}`.trimEnd(),
+          `           npx convex env set EMAIL_FROM "${BRAND} <address>" ${target.join(" ")}`.trimEnd(),
         );
       } else {
         console.log("         This account has no senders configured at all.");
@@ -409,7 +431,7 @@ if (provider === "brevo") {
       headers: {
         Accept: "application/json",
         Authorization: `Bearer ${apiKey}`,
-        "User-Agent": "HealthConnect/1.0 (+check-email)",
+        "User-Agent": "VirtualFamilyConnect/1.0 (+check-email)",
       },
       signal: AbortSignal.timeout(15_000),
     });
@@ -477,7 +499,7 @@ if (testRecipient) {
     );
   }
 
-  const subject = "HealthConnect email delivery test";
+  const subject = `${BRAND} email delivery test`;
   const text =
     "This is a test message from `pnpm check:email`.\n\n" +
     "If you are reading this, the sending address is verified and sign-in codes " +
@@ -491,7 +513,7 @@ if (testRecipient) {
   const headers = {
     "Content-Type": "application/json",
     Accept: "application/json",
-    "User-Agent": "HealthConnect/1.0 (+check-email)",
+    "User-Agent": "VirtualFamilyConnect/1.0 (+check-email)",
   };
   if (provider === "brevo") {
     headers["api-key"] = apiKey;

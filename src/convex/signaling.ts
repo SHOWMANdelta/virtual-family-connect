@@ -22,12 +22,13 @@ export const sendSignal = mutation({
     if (!user) throwErr("AUTH_REQUIRED", "Must be authenticated", 401);
     if (user!._id !== args.fromUserId) throwErr("NOT_ALLOWED", "Cannot send on behalf of another user", 403);
 
-    // Verify sender is a participant of the room
+    // Verify sender is an active participant of the room
     const fromParticipant = await ctx.db
       .query("roomParticipants")
       .withIndex("by_room_and_user", (q) => q.eq("roomId", args.roomId).eq("userId", args.fromUserId))
+      .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
-    if (!fromParticipant || fromParticipant.leftAt) {
+    if (!fromParticipant) {
       throwErr("NOT_IN_ROOM", "Sender is not an active participant in the room", 403);
     }
 
@@ -65,10 +66,11 @@ export const getSignals = query({
     if (!user) throwErr("AUTH_REQUIRED", "Must be authenticated", 401);
     if (user!._id !== args.forUserId) throwErr("NOT_ALLOWED", "Cannot read signals for another user", 403);
 
-    // Ensure the requesting user is a participant in the room
+    // Ensure the requesting user is an active participant in the room
     const participant = await ctx.db
       .query("roomParticipants")
       .withIndex("by_room_and_user", (q) => q.eq("roomId", args.roomId).eq("userId", args.forUserId))
+      .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
     if (!participant) {
       // Return empty to avoid race while client is in the process of joining
@@ -76,20 +78,20 @@ export const getSignals = query({
     }
 
     try {
+      const now = Date.now();
+      const MAX_SIGNAL_AGE_MS = 3 * 60 * 1000; // 3 minutes
+
       const rows = await ctx.db
         .query("signals")
         .withIndex("by_room_and_to", (q) => q.eq("roomId", args.roomId).eq("toUserId", args.forUserId))
         .collect();
 
-      // De-duplicate per (fromUserId, kind), keeping the latest by createdAt to avoid processing stale/duplicate offers
-      const latestBySenderAndKind = new Map<string, typeof rows[number]>();
-      for (const r of rows) {
-        const key = `${r.fromUserId}:${r.kind}`;
-        const prev = latestBySenderAndKind.get(key);
-        if (!prev || r.createdAt > prev.createdAt) latestBySenderAndKind.set(key, r);
-      }
-      const deduped = Array.from(latestBySenderAndKind.values()).sort((a, b) => a.createdAt - b.createdAt);
-      return deduped;
+      // Return all signals in chronological order (FIFO) so all ICE candidates and SDPs arrive intact
+      const validSignals = rows
+        .filter((r) => now - r.createdAt < MAX_SIGNAL_AGE_MS)
+        .sort((a, b) => a.createdAt - b.createdAt);
+
+      return validSignals;
     } catch (err) {
       console.error("SIGNAL_FETCH_FAILED", { err, args });
       throwErr("SIGNAL_FETCH_FAILED", "Unable to fetch signals", 500);

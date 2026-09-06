@@ -2,14 +2,14 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useAuth } from "@/hooks/use-auth";
 import { motion } from "framer-motion";
-import { 
-  Video, 
-  Heart, 
-  Users, 
-  Shield, 
-  Clock, 
+import {
+  Video,
+  Heart,
+  Users,
+  Shield,
+  Mail,
   Monitor,
-  Phone,
+  MessageCircle,
   Calendar,
   ArrowRight,
   CheckCircle,
@@ -44,59 +44,59 @@ export default function Landing() {
   const features = [
     {
       icon: Video,
-      title: "HD Video Calls",
-      description: "Crystal clear video communication with family and healthcare providers",
+      title: "Face-to-Face Video",
+      description: "Clear video and audio in the browser, with mute, camera controls, and screen sharing built in",
       color: "bg-blue-100 text-blue-600"
     },
     {
-      icon: Heart,
-      title: "Health Monitoring",
-      description: "Real-time vital signs tracking and health data sharing",
+      icon: Users,
+      title: "Your Family Circle",
+      description: "Connect relatives by email, set the relationship, and approve who joins your circle",
+      color: "bg-purple-100 text-purple-600"
+    },
+    {
+      icon: Mail,
+      title: "Invite by Email",
+      description: "Send a secure join link that drops the person you invited straight into the right room",
       color: "bg-red-100 text-red-600"
     },
     {
       icon: Shield,
-      title: "HIPAA Compliant",
-      description: "Enterprise-grade security protecting your medical information",
+      title: "Private by Invitation",
+      description: "Rooms are invite-only, connection requests need approval, and join links expire",
       color: "bg-green-100 text-green-600"
     },
     {
-      icon: Users,
-      title: "Family Network",
-      description: "Connect patients with their loved ones and care team",
-      color: "bg-purple-100 text-purple-600"
-    },
-    {
-      icon: Clock,
-      title: "24/7 Access",
-      description: "Round-the-clock availability for emergency consultations",
-      color: "bg-orange-100 text-orange-600"
-    },
-    {
       icon: Calendar,
-      title: "Smart Scheduling",
-      description: "Easy appointment booking and automated reminders",
+      title: "Scheduled Visits",
+      description: "Book a visit ahead of time and open the room for everyone when it's time to start",
       color: "bg-indigo-100 text-indigo-600"
+    },
+    {
+      icon: MessageCircle,
+      title: "Chat and Call Alerts",
+      description: "Message anyone in your circle, and get an alert the moment someone calls you",
+      color: "bg-orange-100 text-orange-600"
     }
   ];
 
   const testimonials = [
     {
       name: "Sarah Johnson",
-      role: "Patient",
-      content: "HealthConnect has been a lifeline for staying close to my family during my recovery. The video quality is excellent and it's so easy to use.",
+      role: "Daughter",
+      content: "Mum's care home is two hours away. We have a call every Sunday now, and my kids get to see their grandmother's face instead of just hearing her voice.",
       rating: 5
     },
     {
-      name: "Dr. Michael Chen",
-      role: "Healthcare Provider",
-      content: "This platform has revolutionized how I monitor my patients remotely. The real-time health data integration is incredibly valuable.",
+      name: "Michael Chen",
+      role: "Patient",
+      content: "After my surgery I couldn't have visitors for a fortnight. Being able to see everyone on the screen made the ward feel a lot less lonely.",
       rating: 5
     },
     {
       name: "Maria Rodriguez",
-      role: "Family Member",
-      content: "Being able to virtually visit my grandmother and see her health updates gives me such peace of mind. Highly recommended!",
+      role: "Care Coordinator",
+      content: "Setting up a room and emailing the family a link takes about a minute. Relatives who aren't confident with technology manage it just fine.",
       rating: 5
     }
   ];
@@ -111,11 +111,11 @@ export default function Landing() {
               <div className="p-2 bg-blue-600 rounded-lg shadow-md">
                 <img
                   src="/logo.svg"
-                  alt="HealthConnect"
+                  alt="Virtual Family Connect"
                   className="h-6 w-6 text-white"
                 />
               </div>
-              <span className="text-xl font-bold text-gray-900">HealthConnect</span>
+              <span className="text-xl font-bold text-gray-900">Virtual Family Connect</span>
             </div>
             
             <div className="hidden md:flex items-center space-x-8">
@@ -151,17 +151,6 @@ export default function Landing() {
                 className="text-gray-600 hover:text-blue-600 transition-colors"
               >
                 Testimonials
-              </a>
-              <a
-                id="pricingBtn"
-                href="#pricing"
-                onClick={(e) => {
-                  e.preventDefault();
-                  scrollToSection("pricing");
-                }}
-                className="text-gray-600 hover:text-blue-600 transition-colors"
-              >
-                Pricing
               </a>
             </div>
 
@@ -202,45 +191,46 @@ export default function Landing() {
               transition={{ duration: 0.8 }}
             >
               <h1 className="text-5xl lg:text-6xl font-bold text-gray-900 leading-tight mb-6">
-                Connect Care,
-                <span className="text-blue-600"> Virtually</span>
+                Be There,
+                <span className="text-blue-600"> Face to Face</span>
               </h1>
               <p className="text-xl text-gray-600 mb-8 leading-relaxed">
-                Bridge the gap between patients and their loved ones with secure, 
-                high-quality video conferencing and real-time health monitoring.
+                Set up a private video room, invite your family by email, and see
+                each other properly — from the browser you already have open.
               </p>
-              
+
               <div className="flex flex-col sm:flex-row gap-4 mb-8">
-                <Button 
+                <Button
                   onClick={handleGetStarted}
                   size="lg"
                   className="bg-blue-600 hover:bg-blue-700 shadow-lg hover:shadow-xl transition-all duration-300 text-lg px-8 py-4"
                 >
-                  {isAuthenticated ? "Go to Dashboard" : "Start Free Trial"}
+                  {isAuthenticated ? "Go to Dashboard" : "Get Started Free"}
                   <ArrowRight className="ml-2 h-5 w-5" />
                 </Button>
-                <Button 
-                  variant="outline" 
+                <Button
+                  variant="outline"
                   size="lg"
+                  onClick={() => scrollToSection("how-it-works")}
                   className="border-2 border-blue-600 text-blue-600 hover:bg-blue-50 text-lg px-8 py-4"
                 >
                   <Play className="mr-2 h-5 w-5" />
-                  Watch Demo
+                  See How It Works
                 </Button>
               </div>
 
               <div className="flex items-center space-x-6 text-sm text-gray-500">
                 <div className="flex items-center">
                   <CheckCircle className="h-4 w-4 text-green-500 mr-2" />
-                  HIPAA Compliant
+                  Invite-only rooms
                 </div>
                 <div className="flex items-center">
                   <CheckCircle className="h-4 w-4 text-green-500 mr-2" />
-                  24/7 Support
+                  Works in your browser
                 </div>
                 <div className="flex items-center">
                   <CheckCircle className="h-4 w-4 text-green-500 mr-2" />
-                  No Setup Required
+                  Nothing to install
                 </div>
               </div>
             </motion.div>
@@ -261,21 +251,19 @@ export default function Landing() {
                 
                 <div className="grid grid-cols-3 gap-4">
                   <div className="text-center p-3 bg-gray-50 rounded-lg">
-                    <Heart className="h-6 w-6 text-red-500 mx-auto mb-2" />
-                    <p className="text-xs text-gray-600">Heart Rate</p>
-                    <p className="font-semibold">72 BPM</p>
+                    <Users className="h-6 w-6 text-blue-500 mx-auto mb-2" />
+                    <p className="text-xs text-gray-600">In the room</p>
+                    <p className="font-semibold">3 joined</p>
                   </div>
                   <div className="text-center p-3 bg-gray-50 rounded-lg">
-                    <Monitor className="h-6 w-6 text-blue-500 mx-auto mb-2" />
-                    <p className="text-xs text-gray-600">Blood Pressure</p>
-                    <p className="font-semibold">120/80</p>
+                    <Monitor className="h-6 w-6 text-purple-500 mx-auto mb-2" />
+                    <p className="text-xs text-gray-600">Screen share</p>
+                    <p className="font-semibold">Ready</p>
                   </div>
                   <div className="text-center p-3 bg-gray-50 rounded-lg">
-                    <div className="h-6 w-6 bg-green-500 rounded-full mx-auto mb-2 flex items-center justify-center">
-                      <span className="text-white text-xs">O₂</span>
-                    </div>
-                    <p className="text-xs text-gray-600">Oxygen</p>
-                    <p className="font-semibold">98%</p>
+                    <MessageCircle className="h-6 w-6 text-green-500 mx-auto mb-2" />
+                    <p className="text-xs text-gray-600">Chat</p>
+                    <p className="font-semibold">On</p>
                   </div>
                 </div>
               </div>
@@ -303,11 +291,11 @@ export default function Landing() {
             className="text-center mb-16"
           >
             <h2 className="text-4xl font-bold text-gray-900 mb-4">
-              Everything You Need for Virtual Care
+              Everything You Need to Be Together
             </h2>
             <p className="text-xl text-gray-600 max-w-3xl mx-auto">
-              Our comprehensive platform brings together video conferencing, health monitoring, 
-              and family connectivity in one secure, easy-to-use solution.
+              Private video rooms, email invites, scheduled visits, and chat —
+              everything it takes to keep a family in touch, in one place.
             </p>
           </motion.div>
 
@@ -352,10 +340,10 @@ export default function Landing() {
             className="text-center mb-16"
           >
             <h2 className="text-4xl font-bold text-gray-900 mb-4">
-              Simple Steps to Better Care
+              Three Steps to Your First Visit
             </h2>
             <p className="text-xl text-gray-600 max-w-3xl mx-auto">
-              Get started in minutes with our intuitive platform designed for all ages and technical abilities.
+              Set up in minutes, on a platform simple enough for every generation to use.
             </p>
           </motion.div>
 
@@ -364,19 +352,19 @@ export default function Landing() {
               {
                 step: "1",
                 title: "Sign Up & Connect",
-                description: "Create your account and connect with family members or patients using their email address.",
+                description: "Create your account, then send a connection request to a family member using their email address.",
                 icon: Users
               },
               {
                 step: "2",
                 title: "Schedule or Start",
-                description: "Book appointments in advance or start instant video calls with your care network.",
+                description: "Start a call straight away, or book a visit for later and email everyone a join link.",
                 icon: Calendar
               },
               {
                 step: "3",
-                title: "Monitor & Care",
-                description: "Share health data, have face-to-face conversations, and stay connected with loved ones.",
+                title: "Sit Down Together",
+                description: "Talk face to face, share your screen to show photos or paperwork, and keep chatting on the side.",
                 icon: Heart
               }
             ].map((step, index) => (
@@ -415,10 +403,10 @@ export default function Landing() {
             className="text-center mb-16"
           >
             <h2 className="text-4xl font-bold text-gray-900 mb-4">
-              Trusted by Families Everywhere
+              What Families Are Saying
             </h2>
             <p className="text-xl text-gray-600 max-w-3xl mx-auto">
-              See how HealthConnect is making a difference in the lives of patients, families, and healthcare providers.
+              How Virtual Family Connect helps people stay close to the ones they love.
             </p>
           </motion.div>
 
@@ -463,27 +451,28 @@ export default function Landing() {
             viewport={{ once: true }}
           >
             <h2 className="text-4xl font-bold text-white mb-6">
-              Ready to Transform Your Care Experience?
+              Ready to See Them Again?
             </h2>
             <p className="text-xl text-blue-100 mb-8 leading-relaxed">
-              Join thousands of families who are staying connected and improving health outcomes with HealthConnect.
+              Create a room, send your family a link, and have your first call in the next five minutes.
             </p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
-              <Button 
+              <Button
                 onClick={handleGetStarted}
                 size="lg"
                 className="bg-white text-blue-600 hover:bg-gray-100 shadow-lg hover:shadow-xl transition-all duration-300 text-lg px-8 py-4"
               >
-                {isAuthenticated ? "Go to Dashboard" : "Start Your Free Trial"}
+                {isAuthenticated ? "Go to Dashboard" : "Create Your Free Account"}
                 <ArrowRight className="ml-2 h-5 w-5" />
               </Button>
-              <Button 
-                variant="outline" 
+              <Button
+                variant="outline"
                 size="lg"
+                onClick={() => scrollToSection("features")}
                 className="border-2 border-white text-white hover:bg-white hover:text-blue-600 text-lg px-8 py-4"
               >
-                <Phone className="mr-2 h-5 w-5" />
-                Schedule Demo
+                <Video className="mr-2 h-5 w-5" />
+                See the Features
               </Button>
             </div>
           </motion.div>
@@ -497,12 +486,12 @@ export default function Landing() {
             <div>
               <div className="flex items-center space-x-3 mb-4">
                 <div className="p-2 bg-blue-600 rounded-lg">
-                  <img src="/logo.svg" alt="HealthConnect" className="h-6 w-6" />
+                  <img src="/logo.svg" alt="Virtual Family Connect" className="h-6 w-6" />
                 </div>
-                <span className="text-xl font-bold">HealthConnect</span>
+                <span className="text-xl font-bold">Virtual Family Connect</span>
               </div>
               <p className="text-gray-400 leading-relaxed">
-                Connecting patients and families through secure, high-quality virtual care experiences.
+                Private video rooms that keep families face to face, wherever life has put them.
               </p>
             </div>
             
@@ -538,7 +527,7 @@ export default function Landing() {
           </div>
           
           <div className="border-t border-gray-800 mt-8 pt-8 text-center text-gray-400">
-            <p>&copy; 2024 HealthConnect. All rights reserved. Built with ❤️ for better healthcare.</p>
+            <p>&copy; 2026 Virtual Family Connect. All rights reserved. Built with ❤️ to keep families close.</p>
           </div>
         </div>
       </footer>

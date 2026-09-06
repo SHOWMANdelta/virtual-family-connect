@@ -213,14 +213,14 @@ export default function Dashboard() {
       <header className="bg-white shadow-sm border-b">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
-            <div className="flex items-center space-x-4">
+            <div className="flex items-center space-x-4 min-w-0">
               <img
                 src="/logo.svg"
-                alt="HealthConnect"
-                className="h-8 w-8 cursor-pointer"
+                alt="Virtual Family Connect"
+                className="h-8 w-8 shrink-0 cursor-pointer"
                 onClick={() => navigate("/")}
               />
-              <h1 className="text-xl font-semibold text-gray-900">HealthConnect</h1>
+              <h1 className="text-lg sm:text-xl font-semibold text-gray-900 truncate">Virtual Family Connect</h1>
             </div>
             
             <div className="flex items-center space-x-4">
@@ -257,7 +257,7 @@ export default function Dashboard() {
                   </div>
                   <div>
                     <h3 className="font-semibold text-gray-900">Start Video Call</h3>
-                    <p className="text-sm text-gray-600">Connect with family or healthcare providers</p>
+                    <p className="text-sm text-gray-600">Connect with family and your care network</p>
                   </div>
                 </div>
                 <Dialog open={isCreateRoomOpen} onOpenChange={setIsCreateRoomOpen}>

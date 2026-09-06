@@ -38,9 +38,9 @@
  * `auth.signIn` is a public endpoint, so vendor text must not reach the client).
  */
 
-import { subjectSafe } from "./emailTemplates";
+import { BRAND_NAME, subjectSafe } from "./emailTemplates";
 
-const DEFAULT_RESEND_SENDER = "HealthConnect <onboarding@resend.dev>";
+const DEFAULT_RESEND_SENDER = `${BRAND_NAME} <onboarding@resend.dev>`;
 
 /** Wall-clock ceiling for one HTTP attempt. */
 const ATTEMPT_TIMEOUT_MS = 10_000;
@@ -213,7 +213,7 @@ export function resolveEmailConfig(): ResolvedEmailConfig {
     return { configured: false, reason: "sender_required", devLog };
   }
 
-  const sender = parseSender(fromRaw ?? DEFAULT_RESEND_SENDER, "HealthConnect");
+  const sender = parseSender(fromRaw ?? DEFAULT_RESEND_SENDER, BRAND_NAME);
   if (!sender) {
     return { configured: false, reason: "sender_required", devLog };
   }
@@ -423,7 +423,7 @@ async function attempt(
     // that a User-Agent be present (it rejects requests without one at the edge
     // with a 403/1010 that looks exactly like a bad key). An explicit, specific
     // value just makes the provider's logs easier to read.
-    "User-Agent": "HealthConnect/1.0 (+convex)",
+    "User-Agent": "VirtualFamilyConnect/1.0 (+convex)",
   };
 
   const body =
@@ -549,7 +549,7 @@ export async function sendEmail(args: SendEmailArgs): Promise<SendEmailResult> {
         " To deliver for real — Brevo verifies a single address, so no domain",
         " is needed. Confirm the sender in Brevo under Senders first, then:",
         "   npx convex env set BREVO_API_KEY xkeysib-xxxxxxxx",
-        '   npx convex env set EMAIL_FROM "HealthConnect <you@gmail.com>"',
+        `   npx convex env set EMAIL_FROM "${BRAND_NAME} <you@gmail.com>"`,
         "   pnpm check:email        # confirms the sender is actually verified",
         "==================================================================",
         "",

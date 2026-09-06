@@ -6,7 +6,15 @@
  * everything reaching a subject line goes through `subjectSafe`.
  */
 
-const BRAND_NAME = "HealthConnect";
+/**
+ * Product name as recipients see it — email header, subject lines, footers.
+ *
+ * Exported because delivery needs the same string for the sender's display name:
+ * a code whose subject says one product and whose From line says another reads
+ * as a phishing attempt, which is the one impression a sign-in email cannot
+ * afford. Keep this the only definition.
+ */
+export const BRAND_NAME = "Virtual Family Connect";
 const ACCENT = "#2563eb";
 
 /**

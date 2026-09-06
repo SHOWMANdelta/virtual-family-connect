@@ -9,7 +9,7 @@
  *   node setup-auth.mjs --force         # rotate keys
  *   node setup-auth.mjs --site-url=...  # override the app origin
  *   node setup-auth.mjs --prod --site-url=https://your-app.vercel.app
- *   node setup-auth.mjs --deployment <name>
+ *   node setup-auth.mjs --deployment-name <name>
  *
  * Replaces the old set-convex-jwt-env.sh, which called a `jwt-keygen` binary
  * that was never installed.
@@ -25,13 +25,25 @@ const args = process.argv.slice(2);
 const force = args.includes("--force");
 const siteUrlArg = args.find((a) => a.startsWith("--site-url="));
 
+/**
+ * Product name, duplicated from BRAND_NAME in src/convex/emailTemplates.ts —
+ * that file is TypeScript for the Convex runtime and this is plain Node. Used
+ * only in the EMAIL_FROM examples this script prints, so the commands a reader
+ * copies out already carry the right sender name.
+ */
+const BRAND = "Virtual Family Connect";
+
 // Forwarded verbatim to every `convex env` call, so one flag targets one
-// deployment. `--deployment` takes a value, so it has to be picked up as a pair.
+// deployment. The Convex CLI spells this `--deployment-name <name>` (checked
+// against `convex env set --help`); `--deployment` is not a flag it knows, so
+// accept both spellings from the user and always emit the real one.
 const target = [];
 if (args.includes("--prod")) target.push("--prod");
-const deploymentIndex = args.indexOf("--deployment");
+const deploymentIndex = args.findIndex(
+  (a) => a === "--deployment-name" || a === "--deployment",
+);
 if (deploymentIndex !== -1 && args[deploymentIndex + 1]) {
-  target.push("--deployment", args[deploymentIndex + 1]);
+  target.push("--deployment-name", args[deploymentIndex + 1]);
 }
 
 const label = target.length === 0 ? "dev" : target.join(" ");
@@ -197,11 +209,11 @@ console.log(
     "",
     "    Brevo (recommended: verifies a single address, so no domain needed)",
     `      npx convex env set BREVO_API_KEY xkeysib-xxxxxxxx ${target.join(" ")}`.trimEnd(),
-    `      npx convex env set EMAIL_FROM "HealthConnect <you@gmail.com>" ${target.join(" ")}`.trimEnd(),
+    `      npx convex env set EMAIL_FROM "${BRAND} <you@gmail.com>" ${target.join(" ")}`.trimEnd(),
     "",
     "    Resend (better deliverability, but needs a domain you can add DNS to)",
     `      npx convex env set RESEND_API_KEY re_xxxxxxxx ${target.join(" ")}`.trimEnd(),
-    `      npx convex env set EMAIL_FROM "HealthConnect <you@yourdomain.com>" ${target.join(" ")}`.trimEnd(),
+    `      npx convex env set EMAIL_FROM "${BRAND} <you@yourdomain.com>" ${target.join(" ")}`.trimEnd(),
     "",
     "  Then confirm it will actually reach strangers, not just you:",
     `    pnpm check:email ${target.join(" ")}`.trimEnd(),

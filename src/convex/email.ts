@@ -14,7 +14,7 @@ import {
   type EmailErrorCode,
   sendEmail,
 } from "./emailDelivery";
-import { escapeHtml, renderRoomInviteEmail } from "./emailTemplates";
+import { BRAND_NAME, escapeHtml, renderRoomInviteEmail } from "./emailTemplates";
 
 /** Retries for a transient failure, on top of the ones inside `sendEmail`. */
 const MAX_INVITE_ATTEMPTS = 3;
@@ -159,7 +159,7 @@ export const sendConnectionInvite = internalAction({
             <h1 style="margin:0 0 16px;font-size:22px;color:#0f172a;">Connection request</h1>
             <p style="margin:0 0 20px;font-size:15px;line-height:1.6;color:#475569;">
               <strong style="color:#0f172a;">${inviter}</strong> wants to connect with you as
-              <strong style="color:#0f172a;">${relationship}</strong> on HealthConnect.
+              <strong style="color:#0f172a;">${relationship}</strong> on ${BRAND_NAME}.
             </p>
             <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 20px;">
               <tr><td style="border-radius:10px;background:#2563eb;">
@@ -182,10 +182,10 @@ export const sendConnectionInvite = internalAction({
     try {
       await sendEmail({
         to: args.toEmail,
-        subject: `${args.inviterNameOrEmail} wants to connect with you on HealthConnect`,
+        subject: `${args.inviterNameOrEmail} wants to connect with you on ${BRAND_NAME}`,
         html,
         text: [
-          `${args.inviterNameOrEmail} wants to connect with you as ${args.relationship} on HealthConnect.`,
+          `${args.inviterNameOrEmail} wants to connect with you as ${args.relationship} on ${BRAND_NAME}.`,
           "",
           "Review the request:",
           openUrl,
