@@ -259,6 +259,24 @@ export default function VideoRoom() {
 
       // Save and re-render
       remoteStreamsRef.current.set(peerUserId, stream);
+
+      // Imperatively sync audio element so audio always plays even when
+      // the MediaStream object is mutated rather than replaced
+      const audioEl = document.getElementById(`audio-remote-${peerUserId}`) as HTMLAudioElement | null;
+      if (audioEl) {
+        if (audioEl.srcObject !== stream) {
+          audioEl.srcObject = stream;
+        }
+        audioEl.volume = remoteVolumeRef.current.get(peerUserId) ?? 1;
+        audioEl.play().catch(() => {});
+      }
+
+      // Imperatively sync the remote video tile element too
+      const videoEl = remoteVideoElsRef.current.get(peerUserId);
+      if (videoEl && videoEl.srcObject !== stream) {
+        videoEl.srcObject = stream;
+        videoEl.play().catch(() => {});
+      }
       forceRender((n) => n + 1);
     };
 
@@ -1305,70 +1323,88 @@ export default function VideoRoom() {
 
     return (
       <div
-        className="
+        className={`
           absolute z-20
-          inset-x-4 bottom-36 pb-[env(safe-area-inset-bottom)]
-          flex gap-3 overflow-x-auto
-          p-3
-          rounded-2xl bg-black/45 backdrop-blur-xl border border-white/10 shadow-2xl
-          md:inset-auto md:top-20 md:right-4 md:bottom-28
-          md:w-80 lg:w-96
-          md:flex-col md:gap-4 md:overflow-y-auto md:overflow-x-hidden md:max-h-[60vh]
-        "
+          ${remotePeerEntries.length === 1
+            ? "inset-x-4 bottom-36 pb-[env(safe-area-inset-bottom)] flex gap-3 overflow-x-auto p-3 rounded-2xl bg-black/45 backdrop-blur-xl border border-white/10 shadow-2xl md:inset-auto md:top-20 md:right-4 md:bottom-28 md:w-80 lg:w-96 md:flex-col md:gap-4 md:overflow-y-auto md:overflow-x-hidden md:max-h-[60vh]"
+            : "inset-x-2 bottom-36 pb-[env(safe-area-inset-bottom)] flex gap-2 overflow-x-auto p-2 rounded-2xl bg-black/50 backdrop-blur-xl border border-white/10 shadow-2xl md:inset-auto md:top-16 md:right-4 md:bottom-24 md:w-72 lg:w-80 md:flex-col md:gap-3 md:overflow-y-auto md:overflow-x-hidden md:max-h-[70vh]"
+          }
+        `}
         aria-label="Participants video panel"
       >
         {/* Panel header */}
-        <div className="flex items-center justify-between px-1">
-          <p className="text-xs font-semibold tracking-wide text-white/90">Participants ({remotePeerEntries.length})</p>
+        <div className="flex items-center justify-between px-1 shrink-0">
+          <p className="text-xs font-semibold tracking-wide text-white/90">
+            Participants ({remotePeerEntries.length})
+          </p>
           <span className="text-[10px] text-blue-300">Click tile to focus</span>
         </div>
 
         {remotePeerEntries.map(([uid, stream]) => {
           const isMain = activeMainPeerId === uid;
           const vol = remoteVolumeRef.current.get(uid) ?? 1;
+          const hasLiveVideo = stream.getVideoTracks().some((t) => t.readyState === "live");
+          // Include track count in key so React resyncs the element when tracks are added
+          const tileKey = `${uid}-${stream.getTracks().length}`;
 
           return (
             <motion.div
-              key={uid}
+              key={tileKey}
               initial={{ opacity: 0, scale: 0.96 }}
               animate={{ opacity: 1, scale: 1 }}
               onClick={() => setSelectedPeerId(uid)}
               className={`
                 group relative
                 shrink-0 cursor-pointer
-                w-40 h-28 xs:w-44 xs:h-32 sm:w-48 sm:h-36 md:w-full md:h-44 lg:h-48
+                ${remotePeerEntries.length === 1
+                  ? "w-40 h-28 xs:w-44 xs:h-32 sm:w-48 sm:h-36 md:w-full md:h-44 lg:h-48"
+                  : "w-36 h-24 sm:w-40 sm:h-28 md:w-full md:h-36 lg:h-40"
+                }
                 rounded-xl overflow-hidden
-                ring-2 ${isMain ? "ring-blue-500 shadow-blue-500/20" : "ring-white/15 hover:ring-white/30"} transition-all duration-200
-                shadow-[0_12px_32px_rgba(0,0,0,0.5)] bg-gray-900/80
+                ring-2 ${isMain ? "ring-blue-500" : "ring-white/15 hover:ring-white/30"} transition-all duration-200
+                shadow-xl bg-gray-900/80
                 flex
               `}
             >
-              <video
-                autoPlay
-                playsInline
-                muted
-                className="w-full h-full object-contain sm:object-cover"
-                ref={(el) => {
-                  if (!el) return;
-                  remoteVideoElsRef.current.set(uid, el);
-                  if (el.srcObject !== stream) {
-                    el.srcObject = stream;
-                  }
-                  el.muted = true; // Video element muted; audio played by dedicated audio element
-                  el.play().catch(() => {});
-                }}
-                onDoubleClick={(e) => {
-                  e.stopPropagation();
-                  const container = e.currentTarget.parentElement as HTMLElement | null;
-                  toggleFullscreen(container);
-                }}
-                aria-label={`Remote video from ${getDisplayName(uid)}`}
-              />
+              {/* Video tile — or avatar if camera is off */}
+              {hasLiveVideo ? (
+                <video
+                  autoPlay
+                  playsInline
+                  muted
+                  className="w-full h-full object-contain sm:object-cover"
+                  ref={(el) => {
+                    if (!el) return;
+                    remoteVideoElsRef.current.set(uid, el);
+                    if (el.srcObject !== stream) {
+                      el.srcObject = stream;
+                    }
+                    el.muted = true; // Video element muted; audio played by dedicated audio element
+                    el.play().catch(() => {});
+                  }}
+                  onDoubleClick={(e) => {
+                    e.stopPropagation();
+                    const container = e.currentTarget.parentElement as HTMLElement | null;
+                    toggleFullscreen(container);
+                  }}
+                  aria-label={`Remote video from ${getDisplayName(uid)}`}
+                />
+              ) : (
+                <div className="w-full h-full flex flex-col items-center justify-center bg-gray-800 gap-1.5">
+                  <Avatar className="w-10 h-10 ring-1 ring-white/20">
+                    <AvatarImage src={getAvatarImage(uid)} />
+                    <AvatarFallback className="text-sm">
+                      {getInitials(getDisplayName(uid), undefined)}
+                    </AvatarFallback>
+                  </Avatar>
+                  <p className="text-[10px] text-gray-400">Camera off</p>
+                </div>
+              )}
               {/* top gradient and live badge */}
               <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-black/20" />
               <div className="absolute top-2 left-2 flex items-center gap-1.5 pointer-events-none">
-                <span className="text-[10px] font-semibold tracking-wide px-2 py-0.5 rounded-full bg-red-500 text-white shadow">
-                  Live
+                <span className={`text-[10px] font-semibold tracking-wide px-2 py-0.5 rounded-full text-white shadow ${hasLiveVideo ? "bg-red-500" : "bg-gray-600"}`}>
+                  {hasLiveVideo ? "Live" : "Audio"}
                 </span>
                 {isMain && (
                   <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-blue-600 text-white shadow">
@@ -1378,28 +1414,28 @@ export default function VideoRoom() {
               </div>
               {/* Controls bar: name + volume */}
               <div
-                className="absolute bottom-1 left-1 right-1 flex items-center gap-2 rounded-md px-2 py-1.5 bg-black/65 backdrop-blur-sm"
+                className="absolute bottom-1 left-1 right-1 flex items-center gap-1.5 rounded-md px-2 py-1.5 bg-black/65 backdrop-blur-sm"
                 onClick={(e) => e.stopPropagation()}
               >
-                <Avatar className="w-6 h-6 shrink-0 ring-1 ring-white/25">
+                <Avatar className="w-5 h-5 shrink-0 ring-1 ring-white/25">
                   <AvatarImage src={getAvatarImage(uid)} />
-                  <AvatarFallback className="text-[10px]">
+                  <AvatarFallback className="text-[9px]">
                     {getInitials(getDisplayName(uid), undefined)}
                   </AvatarFallback>
                 </Avatar>
-                <p className="text-[11px] leading-tight text-white/95 truncate flex-1 font-medium">
+                <p className="text-[10px] leading-tight text-white/95 truncate flex-1 font-medium">
                   {getDisplayName(uid)}
                 </p>
                 <button
                   type="button"
                   onClick={() => toggleRemoteMute(uid)}
-                  className="text-white/90 hover:text-white transition-colors"
+                  className="text-white/90 hover:text-white transition-colors shrink-0"
                   aria-label={vol === 0 ? "Unmute participant" : "Mute participant"}
                   title={vol === 0 ? "Unmute" : "Mute"}
                 >
-                  {vol === 0 ? <VolumeX className="h-3.5 w-3.5" /> : <Volume2 className="h-3.5 w-3.5" />}
+                  {vol === 0 ? <VolumeX className="h-3 w-3" /> : <Volume2 className="h-3 w-3" />}
                 </button>
-                <div className="w-16 sm:w-20 pl-1">
+                <div className="w-12 sm:w-16 pl-0.5">
                   <Slider
                     value={[vol]}
                     min={0}
@@ -1416,6 +1452,7 @@ export default function VideoRoom() {
       </div>
     );
   };
+
 
   if (!room) {
     return (
@@ -1744,11 +1781,10 @@ export default function VideoRoom() {
                 setMainVideoReady(true);
                 setMainVideoError(null);
               }}
-              onPause={() => {
-                setMainVideoReady(false);
-              }}
               onCanPlay={() => {
                 setMainVideoError(null);
+                // Also mark ready when canplay fires (covers cases where onPlaying is skipped)
+                setMainVideoReady(true);
               }}
               onStalled={() =>
                 toastOnce(`main:stalled`, () =>
