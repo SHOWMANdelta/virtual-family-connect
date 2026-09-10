@@ -1,5 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { HowItWorksDemo, HowItWorksMini } from "@/components/HowItWorksDemo";
 import { useAuth } from "@/hooks/use-auth";
 import { motion } from "framer-motion";
 import {
@@ -8,19 +9,23 @@ import {
   Users,
   Shield,
   Mail,
-  Monitor,
   MessageCircle,
   Calendar,
   ArrowRight,
   CheckCircle,
   Star,
-  Play
+  Play,
+  Home,
+  Building2,
+  HeartPulse
 } from "lucide-react";
+import { useState } from "react";
 import { useNavigate } from "react-router";
 
 export default function Landing() {
   const { isLoading, isAuthenticated, user } = useAuth();
   const navigate = useNavigate();
+  const [showDemo, setShowDemo] = useState(false);
 
   const handleGetStarted = () => {
     if (isAuthenticated) {
@@ -101,6 +106,27 @@ export default function Landing() {
     }
   ];
 
+  const audiences = [
+    {
+      icon: Home,
+      title: "Families apart",
+      description: "Work, study or a move put miles between you. Gather everyone in one room for a proper Sunday catch-up — grandparents included.",
+      color: "bg-blue-100 text-blue-600"
+    },
+    {
+      icon: HeartPulse,
+      title: "Hospital stays",
+      description: "When visiting hours or infection rules keep loved ones out, a patient can still see every face from the ward — no app to fumble with.",
+      color: "bg-rose-100 text-rose-600"
+    },
+    {
+      icon: Building2,
+      title: "Care homes",
+      description: "Staff open a room and email a link; relatives who aren't confident with technology just click once and they're there.",
+      color: "bg-emerald-100 text-emerald-600"
+    }
+  ];
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50">
       {/* Navigation */}
@@ -140,6 +166,17 @@ export default function Landing() {
                 className="text-gray-600 hover:text-blue-600 transition-colors"
               >
                 How It Works
+              </a>
+              <a
+                id="whoItsForBtn"
+                href="#who-its-for"
+                onClick={(e) => {
+                  e.preventDefault();
+                  scrollToSection("who-its-for");
+                }}
+                className="text-gray-600 hover:text-blue-600 transition-colors"
+              >
+                Who It's For
               </a>
               <a
                 id="testimonialsBtn"
@@ -211,7 +248,7 @@ export default function Landing() {
                 <Button
                   variant="outline"
                   size="lg"
-                  onClick={() => scrollToSection("how-it-works")}
+                  onClick={() => setShowDemo(true)}
                   className="border-2 border-blue-600 text-blue-600 hover:bg-blue-50 text-lg px-8 py-4"
                 >
                   <Play className="mr-2 h-5 w-5" />
@@ -241,33 +278,8 @@ export default function Landing() {
               transition={{ duration: 0.8, delay: 0.2 }}
               className="relative"
             >
-              <div className="relative bg-white rounded-2xl shadow-2xl p-8 border border-gray-200">
-                <div className="aspect-video bg-gradient-to-br from-blue-100 to-purple-100 rounded-xl mb-6 flex items-center justify-center">
-                  <div className="text-center">
-                    <Video className="h-16 w-16 text-blue-600 mx-auto mb-4" />
-                    <p className="text-gray-600 font-medium">Live Video Session</p>
-                  </div>
-                </div>
-                
-                <div className="grid grid-cols-3 gap-4">
-                  <div className="text-center p-3 bg-gray-50 rounded-lg">
-                    <Users className="h-6 w-6 text-blue-500 mx-auto mb-2" />
-                    <p className="text-xs text-gray-600">In the room</p>
-                    <p className="font-semibold">3 joined</p>
-                  </div>
-                  <div className="text-center p-3 bg-gray-50 rounded-lg">
-                    <Monitor className="h-6 w-6 text-purple-500 mx-auto mb-2" />
-                    <p className="text-xs text-gray-600">Screen share</p>
-                    <p className="font-semibold">Ready</p>
-                  </div>
-                  <div className="text-center p-3 bg-gray-50 rounded-lg">
-                    <MessageCircle className="h-6 w-6 text-green-500 mx-auto mb-2" />
-                    <p className="text-xs text-gray-600">Chat</p>
-                    <p className="font-semibold">On</p>
-                  </div>
-                </div>
-              </div>
-              
+              <HowItWorksMini onOpen={() => setShowDemo(true)} />
+
               {/* Floating elements */}
               <div className="absolute -top-4 -right-4 bg-green-500 text-white p-3 rounded-full shadow-lg">
                 <CheckCircle className="h-6 w-6" />
@@ -345,6 +357,14 @@ export default function Landing() {
             <p className="text-xl text-gray-600 max-w-3xl mx-auto">
               Set up in minutes, on a platform simple enough for every generation to use.
             </p>
+            <Button
+              onClick={() => setShowDemo(true)}
+              size="lg"
+              className="mt-6 bg-blue-600 hover:bg-blue-700 shadow-md"
+            >
+              <Play className="mr-2 h-5 w-5" />
+              Watch the walkthrough
+            </Button>
           </motion.div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
@@ -386,6 +406,55 @@ export default function Landing() {
                 </div>
                 <h3 className="text-xl font-semibold text-gray-900 mb-4">{step.title}</h3>
                 <p className="text-gray-600 leading-relaxed">{step.description}</p>
+              </motion.div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Who this is for Section */}
+      <section id="who-its-for" className="py-20 bg-white">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <motion.div
+            initial={{ opacity: 0, y: 50 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.8 }}
+            viewport={{ once: true }}
+            className="text-center mb-16"
+          >
+            <h2 className="text-4xl font-bold text-gray-900 mb-4">
+              Built for the Moments That Matter
+            </h2>
+            <p className="text-xl text-gray-600 max-w-3xl mx-auto">
+              Wherever life has put the people you love, the goal is the same — to be in the
+              same room again, even when you can't be in the same place.
+            </p>
+          </motion.div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+            {audiences.map((audience, index) => (
+              <motion.div
+                key={audience.title}
+                initial={{ opacity: 0, y: 50 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.6, delay: index * 0.1 }}
+                viewport={{ once: true }}
+              >
+                <Card className="h-full border-0 shadow-md hover:shadow-lg transition-shadow duration-300">
+                  <CardHeader>
+                    <div className={`w-14 h-14 rounded-2xl ${audience.color} flex items-center justify-center mb-4`}>
+                      <audience.icon className="h-7 w-7" />
+                    </div>
+                    <CardTitle className="text-xl font-semibold text-gray-900">
+                      {audience.title}
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <CardDescription className="text-gray-600 text-base leading-relaxed">
+                      {audience.description}
+                    </CardDescription>
+                  </CardContent>
+                </Card>
               </motion.div>
             ))}
           </div>
@@ -498,31 +567,36 @@ export default function Landing() {
             <div>
               <h3 className="font-semibold mb-4">Product</h3>
               <ul className="space-y-2 text-gray-400">
-                <li><a href="#" className="hover:text-white transition-colors">Features</a></li>
-                <li><a href="#" className="hover:text-white transition-colors">Pricing</a></li>
-                <li><a href="#" className="hover:text-white transition-colors">Security</a></li>
-                <li><a href="#" className="hover:text-white transition-colors">Integrations</a></li>
+                <li><a href="#features" onClick={(e) => { e.preventDefault(); scrollToSection("features"); }} className="hover:text-white transition-colors">Features</a></li>
+                <li><button onClick={() => setShowDemo(true)} className="hover:text-white transition-colors">How it works</button></li>
+                <li><a href="#who-its-for" onClick={(e) => { e.preventDefault(); scrollToSection("who-its-for"); }} className="hover:text-white transition-colors">Who it's for</a></li>
+                <li><a href="#testimonials" onClick={(e) => { e.preventDefault(); scrollToSection("testimonials"); }} className="hover:text-white transition-colors">Testimonials</a></li>
               </ul>
             </div>
-            
+
             <div>
-              <h3 className="font-semibold mb-4">Support</h3>
+              <h3 className="font-semibold mb-4">Get started</h3>
               <ul className="space-y-2 text-gray-400">
-                <li><a href="#" className="hover:text-white transition-colors">Help Center</a></li>
-                <li><a href="#" className="hover:text-white transition-colors">Contact Us</a></li>
-                <li><a href="#" className="hover:text-white transition-colors">System Status</a></li>
-                <li><a href="#" className="hover:text-white transition-colors">Training</a></li>
+                {isAuthenticated ? (
+                  <li><button onClick={() => navigate("/dashboard")} className="hover:text-white transition-colors">Go to dashboard</button></li>
+                ) : (
+                  <>
+                    <li><button onClick={() => navigate("/auth")} className="hover:text-white transition-colors">Create free account</button></li>
+                    <li><button onClick={() => navigate("/auth")} className="hover:text-white transition-colors">Sign in</button></li>
+                  </>
+                )}
+                <li><button onClick={() => setShowDemo(true)} className="hover:text-white transition-colors">Watch the walkthrough</button></li>
               </ul>
             </div>
-            
+
             <div>
-              <h3 className="font-semibold mb-4">Company</h3>
+              <h3 className="font-semibold mb-4">Contact</h3>
               <ul className="space-y-2 text-gray-400">
-                <li><a href="#" className="hover:text-white transition-colors">About</a></li>
-                <li><a href="#" className="hover:text-white transition-colors">Blog</a></li>
-                <li><a href="#" className="hover:text-white transition-colors">Careers</a></li>
-                <li><a href="#" className="hover:text-white transition-colors">Privacy</a></li>
+                <li><a href="mailto:hello@virtualfamilyconnect.app" className="hover:text-white transition-colors">hello@virtualfamilyconnect.app</a></li>
               </ul>
+              <p className="text-gray-500 text-sm mt-3 leading-relaxed">
+                Questions or feedback? We read every message.
+              </p>
             </div>
           </div>
           
@@ -531,6 +605,9 @@ export default function Landing() {
           </div>
         </div>
       </footer>
+
+      {/* Animated "How It Works" walkthrough */}
+      <HowItWorksDemo open={showDemo} onOpenChange={setShowDemo} />
     </div>
   );
 }

@@ -8,13 +8,17 @@ export const sendSignal = mutation({
     roomId: v.id("rooms"),
     fromUserId: v.id("users"),
     toUserId: v.id("users"),
-    kind: v.union(v.literal("offer"), v.literal("answer"), v.literal("candidate"), v.literal("leave")),
+    kind: v.union(v.literal("offer"), v.literal("answer"), v.literal("candidate"), v.literal("leave"), v.literal("state")),
     payload: v.object({
       sdp: v.optional(v.string()),
       type: v.optional(v.string()),
       candidate: v.optional(v.string()),
       sdpMid: v.optional(v.string()),
       sdpMLineIndex: v.optional(v.number()),
+      // Presence flags for "state" signals (mic/camera/screen-share status)
+      audioEnabled: v.optional(v.boolean()),
+      videoEnabled: v.optional(v.boolean()),
+      screenSharing: v.optional(v.boolean()),
     }),
   },
   handler: async (ctx, args) => {
